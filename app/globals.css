@@ -1,0 +1,288 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 0 0% 100%;
+    --foreground: 222.2 84% 4.9%;
+
+    --card: 0 0% 100%;
+    --card-foreground: 222.2 84% 4.9%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 222.2 84% 4.9%;
+
+    --primary: 222.2 47.4% 11.2%;
+    --primary-foreground: 210 40% 98%;
+
+    --secondary: 210 40% 96.1%;
+    --secondary-foreground: 222.2 47.4% 11.2%;
+
+    --muted: 210 40% 96.1%;
+    --muted-foreground: 215.4 16.3% 46.9%;
+
+    --accent: 210 40% 96.1%;
+    --accent-foreground: 222.2 47.4% 11.2%;
+
+    --destructive: 0 84.2% 60.2%;
+    --destructive-foreground: 210 40% 98%;
+
+    --border: 214.3 31.8% 91.4%;
+    --input: 214.3 31.8% 91.4%;
+    --ring: 222.2 84% 4.9%;
+
+    --radius: 0.5rem;
+  }
+
+  .dark {
+    --background: 222.2 84% 4.9%;
+    --foreground: 210 40% 98%;
+
+    --card: 222.2 84% 4.9%;
+    --card-foreground: 210 40% 98%;
+
+    --popover: 222.2 84% 4.9%;
+    --popover-foreground: 210 40% 98%;
+
+    --primary: 210 40% 98%;
+    --primary-foreground: 222.2 47.4% 11.2%;
+
+    --secondary: 217.2 32.6% 17.5%;
+    --secondary-foreground: 210 40% 98%;
+
+    --muted: 217.2 32.6% 17.5%;
+    --muted-foreground: 215 20.2% 65.1%;
+
+    --accent: 217.2 32.6% 17.5%;
+    --accent-foreground: 210 40% 98%;
+
+    --destructive: 0 62.8% 30.6%;
+    --destructive-foreground: 210 40% 98%;
+
+    --border: 217.2 32.6% 17.5%;
+    --input: 217.2 32.6% 17.5%;
+    --ring: 212.7 26.8% 83.9%;
+  }
+}
+
+@layer base {
+  html,
+  body {
+    @apply h-full w-full overflow-x-hidden bg-gray-100;
+  }
+
+  body {
+    @apply flex flex-col;
+    min-height: 100vh;
+    padding-top: constant(safe-area-inset-top); /* iOS 11.0 */
+    padding-top: env(safe-area-inset-top); /* iOS 11.2+ */
+  }
+  * {
+    @apply border-border;
+  }
+}
+
+/* Ensure content is centered and doesn't overflow on small screens */
+@media (max-width: 640px) {
+  .container {
+    @apply px-4;
+  }
+}
+
+/* Custom text sizes for very small screens */
+@layer utilities {
+  .text-2xs {
+    font-size: 0.625rem;
+    line-height: 0.75rem;
+  }
+}
+
+/* Adjust for devices with notches */
+@supports (padding-top: env(safe-area-inset-top)) {
+  body {
+    padding-top: env(safe-area-inset-top);
+  }
+}
+
+/* New playful heart animation keyframes */
+@keyframes heart-fly {
+  0% {
+    opacity: 0;
+    transform: translate(-100px, 100px) scale(0.5) rotate(-30deg);
+  }
+  20% {
+    opacity: 1;
+  }
+  50% {
+    transform: translate(0, 0) scale(2) rotate(0deg);
+  }
+  80% {
+    opacity: 1;
+    transform: translate(0, 0) scale(2.5);
+  }
+  100% {
+    opacity: 0;
+    transform: translate(0, -20px) scale(3);
+  }
+}
+
+@layer utilities {
+  .animate-heart-fly {
+    animation: heart-fly 1.5s ease-in-out forwards;
+  }
+
+  .animate-pulse-scale {
+    animation: pulse-scale 0.3s ease-in-out;
+  }
+}
+
+@keyframes pulse-scale {
+  0% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.3);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+/* Explore grid layout - simplified to regular grid */
+.explore-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 4px;
+  margin-bottom: 1rem;
+}
+
+/* For mobile devices, use 2 columns instead of 3 */
+@media (max-width: 640px) {
+  .explore-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+/* Group hover effect for explore items */
+.group:hover .group-hover\:scale-105 {
+  transform: scale(1.05);
+}
+
+.group:hover .group-hover\:opacity-100 {
+  opacity: 1;
+}
+
+/* Prevent zooming on input fields in mobile browsers */
+@media screen and (max-width: 767px) {
+  input,
+  textarea,
+  select {
+    font-size: 16px !important; /* Prevents iOS zoom */
+  }
+
+  /* Additional fix for iOS Safari */
+  input[type="text"],
+  input[type="email"],
+  input[type="search"],
+  input[type="password"] {
+    font-size: 16px !important;
+    -webkit-appearance: none;
+  }
+}
+
+/* Ensure the app takes full viewport height without scrolling */
+html,
+body {
+  height: 100%;
+  width: 100%;
+  overflow-x: hidden;
+  -webkit-overflow-scrolling: touch;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* Fix for iOS safe areas */
+@supports (padding: max(0px)) {
+  body {
+    padding-left: env(safe-area-inset-left);
+    padding-right: env(safe-area-inset-right);
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+}
+
+/* Touch handling for fullscreen components */
+.touch-none {
+  touch-action: none;
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+/* Allow touch events on interactive elements */
+.swipe-area {
+  touch-action: none;
+}
+
+button,
+a,
+.cursor-pointer {
+  touch-action: manipulation;
+}
+
+/* Prevent scrolling when modals are open */
+body.no-scroll {
+  overflow: hidden;
+  position: fixed;
+  width: 100%;
+  height: 100%;
+}
+
+/* This ensures the explore post view is above the footer */
+.z-[1000] {
+  z-index: 1000;
+}
+
+.z-[1001] {
+  z-index: 1001;
+}
+
+.z-[1002] {
+  z-index: 1002;
+}
+
+/* Animation for empty state illustrations */
+@keyframes float {
+  0% {
+    transform: translateY(0px);
+  }
+  50% {
+    transform: translateY(-10px);
+  }
+  100% {
+    transform: translateY(0px);
+  }
+}
+
+.animate-float {
+  animation: float 3s ease-in-out infinite;
+}
+
+/* Subtle rotation animation for icons in empty states */
+@keyframes gentle-rotate {
+  0% {
+    transform: rotate(0deg);
+  }
+  25% {
+    transform: rotate(5deg);
+  }
+  75% {
+    transform: rotate(-5deg);
+  }
+  100% {
+    transform: rotate(0deg);
+  }
+}
+
+.animate-gentle-rotate {
+  animation: gentle-rotate 4s ease-in-out infinite;
+}
