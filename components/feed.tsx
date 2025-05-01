@@ -23,6 +23,8 @@ import ExplorePage from "@/components/explore-page"
 import PostModal from "@/components/post-modal"
 import ExplorePostView from "@/components/explore-post-view"
 import AdPost from "@/components/ad-post"
+// Import the stringToHash function
+import { stringToHash } from "@/lib/arrayUtils"
 
 export default function Feed() {
   // Use our custom hooks for data and interactions
@@ -468,18 +470,22 @@ export default function Feed() {
       // Create a copy of the other posts array
       const result = [...otherPosts]
 
-      // For every 4-6 posts, insert an ad
-      const adFrequency = Math.floor(Math.random() * 3) + 4 // Random number between 4 and 6
+      // Use a fixed ad frequency
+      const adFrequency = 5 // Show an ad every 5 posts
 
-      // Shuffle the ads to get random ones
-      const shuffledAds = [...ads].sort(() => Math.random() - 0.5)
+      // Create a stable ordering of ads based on their IDs
+      const orderedAds = [...ads].sort((a, b) => {
+        const hashA = stringToHash(a.id)
+        const hashB = stringToHash(b.id)
+        return hashA - hashB
+      })
 
-      // Insert ads at regular intervals in the other posts
-      for (let i = 0; i < shuffledAds.length; i++) {
+      // Insert ads at fixed positions
+      for (let i = 0; i < orderedAds.length; i++) {
         const position = (i + 1) * adFrequency
         if (position < result.length) {
           // Mark the ad with a type property
-          result.splice(position, 0, { ...shuffledAds[i], type: "ad" })
+          result.splice(position, 0, { ...orderedAds[i], type: "ad" })
         }
       }
 

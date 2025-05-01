@@ -12,6 +12,83 @@ import { fileToBase64, validateImageFile } from "@/lib/fileUtils"
 // Add tracking import at the top of the file
 import { trackEvent } from "@/lib/tracking"
 
+// Add this function near the top of the file, after the imports
+function getBrowserInfo() {
+  const ua = navigator.userAgent
+  let browserName = "Unknown"
+  let browserVersion = "Unknown"
+  let osName = "Unknown"
+  let deviceType = "Unknown"
+
+  // Detect browser
+  if (ua.indexOf("Firefox") > -1) {
+    browserName = "Firefox"
+    browserVersion = ua.match(/Firefox\/([0-9.]+)/)?.[1] || "Unknown"
+  } else if (ua.indexOf("SamsungBrowser") > -1) {
+    browserName = "Samsung Browser"
+    browserVersion = ua.match(/SamsungBrowser\/([0-9.]+)/)?.[1] || "Unknown"
+  } else if (ua.indexOf("Opera") > -1 || ua.indexOf("OPR") > -1) {
+    browserName = "Opera"
+    browserVersion = ua.match(/(?:Opera|OPR)\/([0-9.]+)/)?.[1] || "Unknown"
+  } else if (ua.indexOf("Edge") > -1) {
+    browserName = "Edge"
+    browserVersion = ua.match(/Edge\/([0-9.]+)/)?.[1] || "Unknown"
+  } else if (ua.indexOf("Edg") > -1) {
+    browserName = "Edge Chromium"
+    browserVersion = ua.match(/Edg\/([0-9.]+)/)?.[1] || "Unknown"
+  } else if (ua.indexOf("Chrome") > -1) {
+    browserName = "Chrome"
+    browserVersion = ua.match(/Chrome\/([0-9.]+)/)?.[1] || "Unknown"
+  } else if (ua.indexOf("Safari") > -1) {
+    browserName = "Safari"
+    browserVersion = ua.match(/Version\/([0-9.]+)/)?.[1] || "Unknown"
+  } else if (ua.indexOf("MSIE") > -1 || ua.indexOf("Trident") > -1) {
+    browserName = "Internet Explorer"
+    browserVersion = ua.match(/(?:MSIE |rv:)([0-9.]+)/)?.[1] || "Unknown"
+  }
+
+  // Detect OS
+  if (ua.indexOf("Windows") > -1) {
+    osName = "Windows"
+  } else if (ua.indexOf("Mac") > -1) {
+    osName = "macOS"
+  } else if (ua.indexOf("iPhone") > -1) {
+    osName = "iOS"
+    deviceType = "Mobile"
+  } else if (ua.indexOf("iPad") > -1) {
+    osName = "iOS"
+    deviceType = "Tablet"
+  } else if (ua.indexOf("Android") > -1) {
+    osName = "Android"
+    deviceType = ua.indexOf("Mobile") > -1 ? "Mobile" : "Tablet"
+  } else if (ua.indexOf("Linux") > -1) {
+    osName = "Linux"
+  }
+
+  // Detect device type if not already determined
+  if (deviceType === "Unknown") {
+    deviceType = window.innerWidth <= 768 ? "Mobile" : "Desktop"
+  }
+
+  // Get screen dimensions
+  const screenWidth = window.screen.width
+  const screenHeight = window.screen.height
+  const viewportWidth = window.innerWidth
+  const viewportHeight = window.innerHeight
+
+  return {
+    browserName,
+    browserVersion,
+    osName,
+    deviceType,
+    screenWidth,
+    screenHeight,
+    viewportWidth,
+    viewportHeight,
+    userAgent: ua,
+  }
+}
+
 // Map URL condition parameters to internal condition codes
 const conditionMap: Record<string, string> = {
   "1": "condition1",
@@ -138,6 +215,17 @@ export default function RegistrationForm() {
       participantId,
       timestamp: new Date().toISOString(),
     })
+
+    // Track browser information
+    const browserInfo = getBrowserInfo()
+    trackEvent({
+      action: "register_browser_info",
+      username: userUsername,
+      text: JSON.stringify(browserInfo),
+      condition: finalCondition,
+      participantId,
+      timestamp: new Date().toISOString(),
+    })
   }
 
   return (
@@ -156,7 +244,7 @@ export default function RegistrationForm() {
             <div className="relative mb-2">
               <Avatar className="h-24 w-24 cursor-pointer" onClick={() => fileInputRef.current?.click()}>
                 {profilePhoto ? (
-                  <AvatarImage src={profilePhoto} alt="Profile" />
+                  <AvatarImage src={profilePhoto || "/placeholder.svg"} alt="Profile" />
                 ) : (
                   <AvatarFallback className="bg-blue-100 text-blue-600 text-xl">
                     <Camera className="h-8 w-8" />

@@ -21,8 +21,9 @@ export type TrackingAction =
   | "register_username"
   | "register_fullname"
   | "register_bio"
-  | "delete_post" // Add this line
-  | "edit_post" // Add this line too for completeness
+  | "register_browser_info" // Add this new action type
+  | "delete_post"
+  | "edit_post"
 
 // Define the tracking data structure
 export interface TrackingData {
