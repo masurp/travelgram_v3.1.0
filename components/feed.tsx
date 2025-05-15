@@ -290,12 +290,28 @@ export default function Feed() {
   }, [])
 
   const handleBackToFeed = useCallback(() => {
+    // Check if we're actually returning from another view
+    const isReturningToFeed = showProfile || showExplore || showSettings
+
     setShowProfile(false)
     setShowSettings(false)
     setShowExplore(false)
     // Clear search when returning to feed
     setSearchKeyword("")
-  }, [])
+
+    // Only track if we're actually returning to the feed (not just clicking "Feed" while already on feed)
+  if (isReturningToFeed && condition) {
+    trackEvent({
+      action: "view_post",
+      username,
+      postId: "feed-page",
+      postOwner: "system",
+      condition,
+      participantId,
+    })
+    console.log("Tracked return to feed")
+  }
+}, [showProfile, showExplore, showSettings, condition, username, participantId])
 
   const handleCloseTab = useCallback(() => {
     window.open("", "_self")
