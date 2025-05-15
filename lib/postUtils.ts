@@ -46,16 +46,16 @@ export function applyLikesToPosts(posts: Post[], conditionStr: string): Post[] {
     if (subCondition === "a") {
       // Subcondition a: High disclosure gets many likes, low disclosure gets few
       if (newPost.disclosure === "high") {
-        newPost.likes = getRandomInRange(120, 170)
+        newPost.likes = getRandomInRange(180, 250)
       } else {
-        newPost.likes = getRandomInRange(5, 55)
+        newPost.likes = getRandomInRange(5, 40)
       }
     } else {
       // Subcondition b: Low disclosure gets many likes, high disclosure gets few
       if (newPost.disclosure === "high") {
-        newPost.likes = getRandomInRange(5, 55)
+        newPost.likes = getRandomInRange(5, 40)
       } else {
-        newPost.likes = getRandomInRange(120, 170)
+        newPost.likes = getRandomInRange(5, 40)
       }
     }
 
