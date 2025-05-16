@@ -21,7 +21,7 @@ export type TrackingAction =
   | "register_username"
   | "register_fullname"
   | "register_bio"
-  | "register_browser_info" // Add this new action type
+  | "register_browser_info"
   | "delete_post"
   | "edit_post"
 
@@ -34,8 +34,8 @@ export interface TrackingData {
   timestamp: string
   text?: string
   condition: Condition | null
-  contentUrl?: string // Add this field to store image data
-  participantId?: string | null // Add this line
+  contentUrl?: string
+  participantId?: string | null
 }
 
 // Queue to store tracking events before sending
@@ -43,21 +43,31 @@ let trackingQueue: TrackingData[] = []
 let isSending = false
 let isTrackingEnabled = true // Flag to disable tracking if it's causing issues
 let failedAttempts = 0 // Track failed attempts to implement backoff
-let sendTimer: ReturnType<typeof setTimeout> | null = null
+const sendTimer: ReturnType<typeof setTimeout> | null = null
+let maxWaitTimer: ReturnType<typeof setTimeout> | null = null
 
 // Maximum number of failed attempts before backing off
 const MAX_FAILED_ATTEMPTS = 3
 // Backoff time in milliseconds (5 minutes)
 const BACKOFF_TIME = 5 * 60 * 1000
-// Debounce time for sending events (500ms)
-const DEBOUNCE_TIME = 1500
 // Maximum batch size
-const MAX_BATCH_SIZE = 75
+const MAX_BATCH_SIZE = 15
+// Maximum wait time before sending regardless of batch size (30 seconds)
+const MAX_WAIT_TIME = 15 * 1000
+
+// Registration events tracking
+const registrationEvents: Record<string, Set<TrackingAction>> = {}
+const REGISTRATION_ACTIONS: TrackingAction[] = [
+  "register_username",
+  "register_fullname",
+  "register_bio",
+  "register_browser_info",
+]
 
 // Local storage for events if sending fails
 let localEvents: TrackingData[] = []
 
-// Function to track an event with debouncing
+// Function to track an event with batching
 export function trackEvent(data: Omit<TrackingData, "timestamp">) {
   // If tracking is disabled, just log locally and return
   if (!isTrackingEnabled) {
@@ -69,29 +79,56 @@ export function trackEvent(data: Omit<TrackingData, "timestamp">) {
   const trackingData: TrackingData = {
     ...data,
     timestamp: new Date().toISOString(),
-    // participantId is already included in data if provided
   }
 
   // Always store locally first
   localEvents.push(trackingData)
 
   // Keep local storage from growing too large
-  if (localEvents.length > 1000) {
-    localEvents = localEvents.slice(-1000)
+  if (localEvents.length > 100) {
+    localEvents = localEvents.slice(-100)
   }
 
   // Add to queue
   trackingQueue.push(trackingData)
 
-  // Clear existing timer if any
-  if (sendTimer) {
-    clearTimeout(sendTimer)
+  // Track registration events by username
+  if (REGISTRATION_ACTIONS.includes(data.action)) {
+    if (!registrationEvents[data.username]) {
+      registrationEvents[data.username] = new Set()
+    }
+    registrationEvents[data.username].add(data.action)
+
+    // If all registration events are complete for this user, log it
+    if (registrationEvents[data.username].size === REGISTRATION_ACTIONS.length) {
+      console.log(`All registration events collected for ${data.username}`)
+      // We don't send immediately - we'll wait for the batch size or timer
+    }
   }
 
-  // Set a new timer to process the queue after a delay
-  sendTimer = setTimeout(() => {
+  // Start the max wait timer if it's not already running
+  if (!maxWaitTimer) {
+    maxWaitTimer = setTimeout(() => {
+      if (trackingQueue.length > 0) {
+        console.log(`Processing queue due to max wait time (${trackingQueue.length} events)`)
+        void processQueue()
+      }
+      maxWaitTimer = null
+    }, MAX_WAIT_TIME)
+  }
+
+  // If we've reached the batch size, process the queue
+  if (trackingQueue.length >= MAX_BATCH_SIZE) {
+    console.log(`Batch size reached (${trackingQueue.length} events), processing queue`)
+
+    // Clear the max wait timer if it's running
+    if (maxWaitTimer) {
+      clearTimeout(maxWaitTimer)
+      maxWaitTimer = null
+    }
+
     void processQueue()
-  }, DEBOUNCE_TIME)
+  }
 }
 
 // Process the tracking queue with batching
@@ -118,6 +155,7 @@ async function processQueue() {
   try {
     // Get the next batch of events (up to MAX_BATCH_SIZE)
     const batch = trackingQueue.slice(0, MAX_BATCH_SIZE)
+    console.log(`Processing batch of ${batch.length} events`)
 
     try {
       // Try to send to the API, but don't wait for it or let it block
@@ -147,11 +185,21 @@ async function processQueue() {
   } finally {
     isSending = false
 
-    // If there are more events in the queue, process them
-    if (trackingQueue.length > 0 && isTrackingEnabled) {
-      // Use a longer delay if we've had failures
-      const delay = failedAttempts > 0 ? 2000 * failedAttempts : 1000
-      setTimeout(() => void processQueue(), delay)
+    // If there are more events in the queue that reach the batch size, process them
+    if (trackingQueue.length >= MAX_BATCH_SIZE && isTrackingEnabled) {
+      console.log(`Still have ${trackingQueue.length} events in queue, processing next batch`)
+      void processQueue()
+    } else if (trackingQueue.length > 0) {
+      // Start a new max wait timer for remaining events
+      if (!maxWaitTimer) {
+        maxWaitTimer = setTimeout(() => {
+          if (trackingQueue.length > 0) {
+            console.log(`Processing remaining ${trackingQueue.length} events due to max wait time`)
+            void processQueue()
+          }
+          maxWaitTimer = null
+        }, MAX_WAIT_TIME)
+      }
     }
   }
 }
@@ -220,6 +268,13 @@ export function getLocalEvents() {
   return [...localEvents]
 }
 
+// Add this function after the getLocalEvents function
+export function clearLocalEvents() {
+  localEvents = []
+  console.log("Local events cleared")
+  return true
+}
+
 // Export function to enable/disable tracking
 export function setTrackingEnabled(enabled: boolean) {
   isTrackingEnabled = enabled
@@ -231,4 +286,31 @@ export function setTrackingEnabled(enabled: boolean) {
 export function resetFailedAttempts() {
   failedAttempts = 0
   return failedAttempts
+}
+
+// Export function to manually flush the queue (for testing)
+export function flushTrackingQueue() {
+  if (trackingQueue.length > 0 && !isSending) {
+    console.log(`Manually flushing ${trackingQueue.length} events`)
+    void processQueue()
+  }
+}
+
+// Export function to get current queue length (for debugging)
+export function getQueueLength() {
+  return trackingQueue.length
+}
+
+// Add this function after the getQueueLength function
+export function getTrackingDataSize() {
+  // Estimate size of tracking queue
+  const queueSize = JSON.stringify(trackingQueue).length
+  // Estimate size of local events
+  const localSize = JSON.stringify(localEvents).length
+
+  return {
+    queueSize: Math.round(queueSize / 1024) + " KB",
+    localSize: Math.round(localSize / 1024) + " KB",
+    totalSize: Math.round((queueSize + localSize) / 1024) + " KB",
+  }
 }
