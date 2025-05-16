@@ -9,6 +9,7 @@ import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { useUser } from "@/contexts/UserContext"
 import { useDarkMode } from "@/contexts/DarkModeContext"
+import { trackEvent } from "@/lib/tracking"
 import { ChevronLeft, Upload, Moon, Sun, Bell, Shield, LogOut } from "lucide-react"
 import { fileToBase64, validateImageFile } from "@/lib/fileUtils"
 
@@ -17,7 +18,7 @@ interface SettingsProps {
 }
 
 export default function Settings({ onBack }: SettingsProps) {
-  const { username, fullName, bio, profilePhoto, logout, updateProfile } = useUser()
+  const { condition, username, fullName, bio, profilePhoto, logout, updateProfile, participantId } = useUser()
   const { isDarkMode, toggleDarkMode } = useDarkMode()
 
   const [newFullName, setNewFullName] = useState(fullName || username)
@@ -27,6 +28,22 @@ export default function Settings({ onBack }: SettingsProps) {
   const [notificationsEnabled, setNotificationsEnabled] = useState(true)
   const [isPrivateAccount, setIsPrivateAccount] = useState(false)
   const [isSaving, setIsSaving] = useState(false)
+
+
+    // Track view of settings page
+  useEffect(() => {
+    if (condition) {
+      trackEvent({
+        action: "view_post",
+        username,
+        postId: "settings-page",
+        postOwner: "system",
+        condition,
+        participantId,
+      })
+    }
+  }, [condition, username])
+
 
   // Log when the component mounts and when props change
   useEffect(() => {
