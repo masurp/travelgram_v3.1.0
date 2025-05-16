@@ -50,9 +50,9 @@ const MAX_FAILED_ATTEMPTS = 3
 // Backoff time in milliseconds (5 minutes)
 const BACKOFF_TIME = 5 * 60 * 1000
 // Debounce time for sending events (500ms)
-const DEBOUNCE_TIME = 500
+const DEBOUNCE_TIME = 1500
 // Maximum batch size
-const MAX_BATCH_SIZE = 20
+const MAX_BATCH_SIZE = 75
 
 // Local storage for events if sending fails
 let localEvents: TrackingData[] = []
