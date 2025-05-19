@@ -237,36 +237,63 @@ async function sendToApi(events: TrackingData[]): Promise<boolean> {
 // Flush the queue before the page unloads, but don't block page unload
 if (typeof window !== "undefined") {
   window.addEventListener("beforeunload", (event) => {
+    // Add it right here:
+    console.log("beforeunload fired. Timestamp:", new Date().toISOString()); // Added timestamp for more context
+
     if (trackingQueue.length > 0 && isTrackingEnabled) {
       try {
         // Log the number of events being sent
-        console.log(`Sending ${trackingQueue.length} remaining events before unload`)
+        console.log(`Sending ${trackingQueue.length} remaining events before unload`);
+        const currentQueueContentForLog = JSON.stringify(trackingQueue.slice(0, 5)); // Log first 5 events for inspection
+        console.log(`Sample of queue: ${currentQueueContentForLog}`);
+
 
         // Use sendBeacon which is designed for this purpose
-        const data = JSON.stringify({ events: trackingQueue })
-        const success = navigator.sendBeacon("/api/track", data)
+        const data = JSON.stringify({ events: trackingQueue });
+        console.log(`Beacon data size: ${data.length} bytes`); // Log data size
+
+        const success = navigator.sendBeacon("/api/track", data);
 
         if (success) {
-          console.log("Successfully sent remaining events via sendBeacon")
+          console.log("Successfully initiated sendBeacon for remaining events");
         } else {
-          console.warn("sendBeacon failed, attempting fetch as fallback")
+          console.warn("sendBeacon failed, attempting fetch as fallback");
 
           // Fallback to synchronous fetch if sendBeacon fails
-          const xhr = new XMLHttpRequest()
-          xhr.open("POST", "/api/track", false) // false makes it synchronous
-          xhr.setRequestHeader("Content-Type", "application/json")
-          xhr.send(data)
-
-          console.log(`Fallback XHR status: ${xhr.status}`)
+          const xhr = new XMLHttpRequest();
+          xhr.open("POST", "/api/track", false); // false makes it synchronous
+          xhr.setRequestHeader("Content-Type", "application/json");
+          
+          // It's good practice to wrap xhr.send in a try-catch as well,
+          // as it can throw errors in some environments or if network is down.
+          try {
+            xhr.send(data);
+            console.log(`Fallback XHR status: ${xhr.status}, Response: ${xhr.responseText}`);
+          } catch (xhrError) {
+            console.error("Error during synchronous XHR send:", xhrError);
+            console.log(`Fallback XHR status after error: ${xhr.status}`); // Status might be 0
+          }
         }
 
         // Clear the queue optimistically
-        trackingQueue = []
+        // Consider if you ONLY want to clear if beacon/XHR was successful or initiated.
+        // For sendBeacon, "success" means it was queued by the browser, not that the server got it.
+        // For synchronous XHR, status 2xx usually means server got it.
+        // Your current optimistic clear is probably fine for this use case.
+        trackingQueue = [];
       } catch (error) {
-        console.error("Error in beforeunload handler:", error)
+        console.error("Error in beforeunload handler:", error);
+      }
+    } else {
+      // Log why it didn't proceed
+      if (trackingQueue.length === 0) {
+        console.log("beforeunload: No events in trackingQueue to send.");
+      }
+      if (!isTrackingEnabled) {
+        console.log("beforeunload: Tracking is not enabled.");
       }
     }
-  })
+  });
 }
 
 // Export function to get local events (for debugging)
