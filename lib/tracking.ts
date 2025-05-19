@@ -21,7 +21,7 @@ export type TrackingAction =
   | "register_username"
   | "register_fullname"
   | "register_bio"
-  | "register_browser_info" // Add this new action type
+  | "register_browser_info"
   | "delete_post"
   | "edit_post"
 
@@ -34,8 +34,8 @@ export interface TrackingData {
   timestamp: string
   text?: string
   condition: Condition | null
-  contentUrl?: string // Add this field to store image data
-  participantId?: string | null // Add this line
+  contentUrl?: string
+  participantId?: string | null
 }
 
 // Queue to store tracking events before sending
@@ -49,15 +49,28 @@ let sendTimer: ReturnType<typeof setTimeout> | null = null
 const MAX_FAILED_ATTEMPTS = 3
 // Backoff time in milliseconds (5 minutes)
 const BACKOFF_TIME = 5 * 60 * 1000
-// Debounce time for sending events (500ms)
-const DEBOUNCE_TIME = 500
-// Maximum batch size
-const MAX_BATCH_SIZE = 25
+// Debounce time for sending events (increased to 30 seconds)
+const DEBOUNCE_TIME = 30000 // 30 seconds
+// Maximum batch size (increased to 100)
+const MAX_BATCH_SIZE = 100
+// Maximum wait time before forcing a send (5 minutes)
+const MAX_WAIT_TIME = 5 * 60 * 1000
+
+// Track the last time we flushed the queue
+let lastFlushTime = Date.now()
+
+// Define critical events that should trigger immediate sending
+const CRITICAL_EVENTS: TrackingAction[] = [
+  "register_username",
+  "register_fullname",
+  "register_bio",
+  "register_browser_info",
+]
 
 // Local storage for events if sending fails
 let localEvents: TrackingData[] = []
 
-// Function to track an event with debouncing
+// Function to track an event with batching
 export function trackEvent(data: Omit<TrackingData, "timestamp">) {
   // If tracking is disabled, just log locally and return
   if (!isTrackingEnabled) {
@@ -69,7 +82,6 @@ export function trackEvent(data: Omit<TrackingData, "timestamp">) {
   const trackingData: TrackingData = {
     ...data,
     timestamp: new Date().toISOString(),
-    // participantId is already included in data if provided
   }
 
   // Always store locally first
@@ -83,15 +95,45 @@ export function trackEvent(data: Omit<TrackingData, "timestamp">) {
   // Add to queue
   trackingQueue.push(trackingData)
 
+  // Check if this is a critical event that should be sent immediately
+  const isCriticalEvent = CRITICAL_EVENTS.includes(data.action)
+
+  // If it's a critical event, flush immediately
+  if (isCriticalEvent && trackingQueue.length > 0) {
+    console.log(`Critical event detected (${data.action}), processing queue immediately`)
+    if (sendTimer) {
+      clearTimeout(sendTimer)
+      sendTimer = null
+    }
+    void processQueue()
+    return
+  }
+
   // Clear existing timer if any
   if (sendTimer) {
     clearTimeout(sendTimer)
   }
 
-  // Set a new timer to process the queue after a delay
-  sendTimer = setTimeout(() => {
+  // Check if we've reached the batch size or max wait time
+  const timeElapsed = Date.now() - lastFlushTime
+  if (trackingQueue.length >= MAX_BATCH_SIZE) {
+    console.log(`Batch size reached (${trackingQueue.length} events), processing queue`)
     void processQueue()
-  }, DEBOUNCE_TIME)
+    lastFlushTime = Date.now()
+  } else if (timeElapsed >= MAX_WAIT_TIME) {
+    console.log(
+      `Max wait time reached (${Math.round(timeElapsed / 1000)}s), processing queue with ${trackingQueue.length} events`,
+    )
+    void processQueue()
+    lastFlushTime = Date.now()
+  } else {
+    // Set a new timer with longer debounce
+    sendTimer = setTimeout(() => {
+      console.log(`Debounce timer expired, processing queue with ${trackingQueue.length} events`)
+      void processQueue()
+      lastFlushTime = Date.now()
+    }, DEBOUNCE_TIME)
+  }
 }
 
 // Process the tracking queue with batching
@@ -231,4 +273,23 @@ export function setTrackingEnabled(enabled: boolean) {
 export function resetFailedAttempts() {
   failedAttempts = 0
   return failedAttempts
+}
+
+// Export function to manually flush the queue (for testing)
+export function flushTrackingQueue() {
+  if (trackingQueue.length > 0 && !isSending) {
+    console.log(`Manually flushing ${trackingQueue.length} events`)
+    void processQueue()
+  }
+  return trackingQueue.length
+}
+
+// Export function to get current queue status (for debugging)
+export function getQueueStatus() {
+  return {
+    queueLength: trackingQueue.length,
+    isSending,
+    lastFlushTime: new Date(lastFlushTime).toISOString(),
+    timeElapsed: Date.now() - lastFlushTime,
+  }
 }

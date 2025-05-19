@@ -13,10 +13,11 @@ export async function POST(request: Request) {
     // Log events for debugging
     console.log(`Received ${events.length} tracking events`)
 
-    // Create a unique filename with timestamp and batch ID
+    // Create a unique filename with date-based prefix for better organization
+    const today = new Date().toISOString().split("T")[0] // YYYY-MM-DD
     const timestamp = new Date().toISOString().replace(/[:.]/g, "-")
     const batchId = Math.random().toString(36).substring(2, 10)
-    const filename = `tracking-events/${timestamp}-${batchId}.json`
+    const filename = `tracking-events/${today}/${timestamp}-${batchId}.json`
 
     try {
       // Store events as JSON in Vercel Blob
@@ -25,7 +26,7 @@ export async function POST(request: Request) {
         contentType: "application/json",
       })
 
-      console.log(`Successfully stored events in Blob: ${blob.url}`)
+      console.log(`Successfully stored ${events.length} events in Blob: ${blob.url}`)
 
       return NextResponse.json({
         success: true,

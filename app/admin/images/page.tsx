@@ -17,6 +17,10 @@ export default function ImagesDashboard() {
   const [type, setType] = useState<"profile" | "post">("post")
   const [username, setUsername] = useState("")
   const [deleting, setDeleting] = useState<string | null>(null)
+  const [migrating, setMigrating] = useState(false)
+  const [migrationResults, setMigrationResults] = useState<any>(null)
+  const [downloading, setDownloading] = useState(false)
+  const [downloadJob, setDownloadJob] = useState<any>(null)
 
   useEffect(() => {
     fetchImages()
@@ -67,37 +71,145 @@ export default function ImagesDashboard() {
     }
   }
 
+  async function migrateBase64Images() {
+    if (!confirm("This will scan for base64 images and migrate them to Blob storage. Continue?")) {
+      return
+    }
+
+    setMigrating(true)
+    setMigrationResults(null)
+
+    try {
+      // In a real implementation, you would fetch user data from your database
+      // For this example, we'll use mock data
+      const mockUserData = [
+        {
+          username: "user1",
+          profilePhoto: "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQEASABIAAD...", // Mock base64
+          posts: [
+            { contentUrl: "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQEASABIAAD..." }, // Mock base64
+          ],
+        },
+      ]
+
+      const response = await fetch("/api/migrate-images", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          type: "all",
+          userData: mockUserData,
+        }),
+      })
+
+      const results = await response.json()
+      setMigrationResults(results)
+
+      // Refresh the image list
+      fetchImages()
+    } catch (error) {
+      console.error("Error migrating images:", error)
+      alert("Error migrating images")
+    } finally {
+      setMigrating(false)
+    }
+  }
+
+  async function downloadAllImages(downloadType: "profile" | "post" | "all" = "all") {
+    setDownloading(true)
+    setDownloadJob(null)
+
+    try {
+      // For small downloads, direct download
+      window.open(`/api/download-images?type=${downloadType}&format=zip`, "_blank")
+
+      // For larger downloads, we would use a background job
+      // const response = await fetch(`/api/download-images?type=${downloadType}&format=zip`)
+      // const data = await response.json()
+
+      // if (data.jobId) {
+      //   setDownloadJob(data)
+      //   // Poll for job status
+      // } else {
+      //   // Direct download handled by the browser
+      // }
+    } catch (error) {
+      console.error("Error downloading images:", error)
+      alert("Error downloading images")
+    } finally {
+      setDownloading(false)
+    }
+  }
+
   return (
     <div className="container mx-auto p-4">
       <h1 className="text-2xl font-bold mb-4">Image Management</h1>
 
-      <div className="mb-6 flex flex-wrap gap-4">
-        <div>
-          <label className="block text-sm font-medium mb-1">Image Type</label>
-          <select
-            value={type}
-            onChange={(e) => setType(e.target.value as "profile" | "post")}
-            className="border rounded px-3 py-2"
-          >
-            <option value="profile">Profile Images</option>
-            <option value="post">Post Images</option>
-          </select>
+      <div className="mb-6 space-y-4">
+        <div className="flex flex-wrap gap-4">
+          <div>
+            <label className="block text-sm font-medium mb-1">Image Type</label>
+            <select
+              value={type}
+              onChange={(e) => setType(e.target.value as "profile" | "post")}
+              className="border rounded px-3 py-2"
+            >
+              <option value="profile">Profile Images</option>
+              <option value="post">Post Images</option>
+            </select>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium mb-1">Username (optional)</label>
+            <input
+              type="text"
+              value={username}
+              onChange={(e) => setUsername(e.target.value)}
+              placeholder="Filter by username"
+              className="border rounded px-3 py-2"
+            />
+          </div>
+
+          <div className="self-end">
+            <Button onClick={fetchImages}>Refresh</Button>
+          </div>
         </div>
 
-        <div>
-          <label className="block text-sm font-medium mb-1">Username (optional)</label>
-          <input
-            type="text"
-            value={username}
-            onChange={(e) => setUsername(e.target.value)}
-            placeholder="Filter by username"
-            className="border rounded px-3 py-2"
-          />
+        <div className="flex flex-wrap gap-2">
+          <Button onClick={() => downloadAllImages("profile")} disabled={downloading}>
+            Download All Profile Images
+          </Button>
+          <Button onClick={() => downloadAllImages("post")} disabled={downloading}>
+            Download All Post Images
+          </Button>
+          <Button onClick={() => downloadAllImages("all")} disabled={downloading}>
+            Download All Images
+          </Button>
+          <Button onClick={migrateBase64Images} disabled={migrating} variant="outline">
+            {migrating ? "Migration in progress..." : "Migrate Base64 Images to Blob"}
+          </Button>
         </div>
 
-        <div className="self-end">
-          <Button onClick={fetchImages}>Refresh</Button>
-        </div>
+        {migrationResults && (
+          <div className="p-4 border rounded bg-gray-50">
+            <h3 className="font-bold">Migration Results</h3>
+            <p>Total users processed: {migrationResults.results.total}</p>
+            <p>Profile images migrated: {migrationResults.results.profileImagesMigrated}</p>
+            <p>Post images migrated: {migrationResults.results.postImagesMigrated}</p>
+            <p>Errors: {migrationResults.results.errors}</p>
+          </div>
+        )}
+
+        {downloadJob && (
+          <div className="p-4 border rounded bg-gray-50">
+            <h3 className="font-bold">Download Job</h3>
+            <p>Job ID: {downloadJob.jobId}</p>
+            <p>Total files: {downloadJob.totalFiles}</p>
+            <p>Status: {downloadJob.status || "pending"}</p>
+            {downloadJob.downloadUrl && (
+              <Button onClick={() => window.open(downloadJob.downloadUrl, "_blank")}>Download Now</Button>
+            )}
+          </div>
+        )}
       </div>
 
       {loading ? (

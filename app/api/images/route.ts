@@ -20,6 +20,9 @@ export async function GET(request: Request) {
 
     const blobs = await list({ prefix })
 
+    // Sort by uploadedAt in descending order (newest first)
+    blobs.blobs.sort((a, b) => new Date(b.uploadedAt).getTime() - new Date(a.uploadedAt).getTime())
+
     return NextResponse.json({
       images: blobs.blobs.map((blob) => ({
         url: blob.url,
