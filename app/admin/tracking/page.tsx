@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button"
 import { Calendar } from "@/components/ui/calendar"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { format } from "date-fns"
-import { CalendarIcon } from "lucide-react"
+import { CalendarIcon, Trash2 } from "lucide-react"
 
 interface TrackingFile {
   filename: string
@@ -23,6 +23,9 @@ export default function TrackingDashboard() {
   const [loadingEvents, setLoadingEvents] = useState(false)
   const [exportLoading, setExportLoading] = useState(false)
   const [totalFiles, setTotalFiles] = useState(0)
+  const [deleteLoading, setDeleteLoading] = useState(false)
+  const [deleteConfirm, setDeleteConfirm] = useState(false)
+  const [deleteResult, setDeleteResult] = useState<string | null>(null)
 
   // Export options
   const [exportFormat, setExportFormat] = useState<"json" | "csv">("json")
@@ -163,6 +166,54 @@ export default function TrackingDashboard() {
     }
   }
 
+  // Function to delete all tracking files
+  async function deleteAllFiles() {
+    if (!deleteConfirm) {
+      setDeleteConfirm(true)
+      setTimeout(() => setDeleteConfirm(false), 5000) // Reset after 5 seconds
+      return
+    }
+
+    setDeleteLoading(true)
+    setError(null)
+    setDeleteResult(null)
+
+    try {
+      // Get the cleanup key from the user
+      const cleanupKey = prompt("Enter the cleanup secret key to confirm deletion:")
+
+      if (!cleanupKey) {
+        setDeleteLoading(false)
+        return
+      }
+
+      console.log("Deleting all tracking files...")
+      const response = await fetch(`/api/tracking-data/delete-all?key=${encodeURIComponent(cleanupKey)}`, {
+        method: "POST",
+      })
+
+      const data = await response.json()
+
+      if (!response.ok) {
+        throw new Error(data.error || `API responded with status ${response.status}`)
+      }
+
+      console.log("Delete response:", data)
+      setDeleteResult(data.message)
+
+      // Refresh the file list after deletion
+      await refreshFiles()
+
+      // Reset the confirmation
+      setDeleteConfirm(false)
+    } catch (error) {
+      console.error("Failed to delete tracking files:", error)
+      setError(`Error deleting files: ${error instanceof Error ? error.message : String(error)}`)
+    } finally {
+      setDeleteLoading(false)
+    }
+  }
+
   return (
     <div className="container mx-auto p-4">
       <h1 className="text-2xl font-bold mb-4">Tracking Data Dashboard</h1>
@@ -173,6 +224,12 @@ export default function TrackingDashboard() {
         </div>
       )}
 
+      {deleteResult && (
+        <div className="bg-green-100 border border-green-400 text-green-700 px-4 py-3 rounded mb-4">
+          <p>{deleteResult}</p>
+        </div>
+      )}
+
       <div className="mb-4 flex flex-wrap gap-2">
         <Button onClick={() => setShowExportOptions(!showExportOptions)} variant="outline">
           {showExportOptions ? "Hide Export Options" : "Show Export Options"}
@@ -180,6 +237,16 @@ export default function TrackingDashboard() {
 
         <Button onClick={refreshFiles} disabled={loading} variant="outline">
           {loading ? "Refreshing..." : "Refresh Files"}
+        </Button>
+
+        <Button
+          onClick={deleteAllFiles}
+          disabled={deleteLoading || files.length === 0}
+          variant="destructive"
+          className="ml-auto"
+        >
+          <Trash2 className="w-4 h-4 mr-2" />
+          {deleteLoading ? "Deleting..." : deleteConfirm ? "Click again to confirm" : "Delete All Tracking Data"}
         </Button>
       </div>
 

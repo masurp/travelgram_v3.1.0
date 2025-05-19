@@ -53,6 +53,11 @@ const BACKOFF_TIME = 5 * 60 * 1000
 const DEBOUNCE_TIME = 500
 // Maximum batch size
 const MAX_BATCH_SIZE = 25
+// Force send interval (30 seconds)
+const FORCE_SEND_INTERVAL = 30 * 1000
+
+// Add a new variable for the force send timer
+let forceTimer: ReturnType<typeof setTimeout> | null = null
 
 // Local storage for events if sending fails
 let localEvents: TrackingData[] = []
@@ -83,7 +88,7 @@ export function trackEvent(data: Omit<TrackingData, "timestamp">) {
   // Add to queue
   trackingQueue.push(trackingData)
 
-  // Clear existing timer if any
+  // Clear existing debounce timer if any
   if (sendTimer) {
     clearTimeout(sendTimer)
   }
@@ -92,12 +97,42 @@ export function trackEvent(data: Omit<TrackingData, "timestamp">) {
   sendTimer = setTimeout(() => {
     void processQueue()
   }, DEBOUNCE_TIME)
+
+  // Start the force send timer if it's not already running
+  if (!forceTimer && trackingQueue.length > 0) {
+    startForceSendTimer()
+  }
+}
+
+// Add a new function to start the force send timer
+function startForceSendTimer() {
+  // Clear any existing timer
+  if (forceTimer) {
+    clearTimeout(forceTimer)
+  }
+
+  // Set a new timer to force send events after the interval
+  forceTimer = setTimeout(() => {
+    console.log("Force sending tracking events due to time interval")
+    void processQueue(true) // Pass true to indicate this is a forced send
+    forceTimer = null
+
+    // If there are still events in the queue, start the timer again
+    if (trackingQueue.length > 0) {
+      startForceSendTimer()
+    }
+  }, FORCE_SEND_INTERVAL)
 }
 
 // Process the tracking queue with batching
-async function processQueue() {
+async function processQueue(force = false) {
   // If already sending or queue is empty or tracking disabled, return
   if (isSending || trackingQueue.length === 0 || !isTrackingEnabled) return
+
+  // Only process if we have enough events or if forced
+  if (trackingQueue.length < MAX_BATCH_SIZE && !force) {
+    return
+  }
 
   // If we've had too many failures, implement backoff
   if (failedAttempts >= MAX_FAILED_ATTEMPTS) {
@@ -149,9 +184,11 @@ async function processQueue() {
 
     // If there are more events in the queue, process them
     if (trackingQueue.length > 0 && isTrackingEnabled) {
-      // Use a longer delay if we've had failures
-      const delay = failedAttempts > 0 ? 2000 * failedAttempts : 1000
-      setTimeout(() => void processQueue(), delay)
+      // If we have enough events for another batch, process immediately
+      if (trackingQueue.length >= MAX_BATCH_SIZE) {
+        setTimeout(() => void processQueue(), 100)
+      }
+      // Otherwise, wait for more events or the force timer
     }
   }
 }
@@ -199,12 +236,29 @@ async function sendToApi(events: TrackingData[]): Promise<boolean> {
 
 // Flush the queue before the page unloads, but don't block page unload
 if (typeof window !== "undefined") {
-  window.addEventListener("beforeunload", () => {
+  window.addEventListener("beforeunload", (event) => {
     if (trackingQueue.length > 0 && isTrackingEnabled) {
       try {
+        // Log the number of events being sent
+        console.log(`Sending ${trackingQueue.length} remaining events before unload`)
+
         // Use sendBeacon which is designed for this purpose
         const data = JSON.stringify({ events: trackingQueue })
-        navigator.sendBeacon("/api/track", data)
+        const success = navigator.sendBeacon("/api/track", data)
+
+        if (success) {
+          console.log("Successfully sent remaining events via sendBeacon")
+        } else {
+          console.warn("sendBeacon failed, attempting fetch as fallback")
+
+          // Fallback to synchronous fetch if sendBeacon fails
+          const xhr = new XMLHttpRequest()
+          xhr.open("POST", "/api/track", false) // false makes it synchronous
+          xhr.setRequestHeader("Content-Type", "application/json")
+          xhr.send(data)
+
+          console.log(`Fallback XHR status: ${xhr.status}`)
+        }
 
         // Clear the queue optimistically
         trackingQueue = []
@@ -231,4 +285,17 @@ export function setTrackingEnabled(enabled: boolean) {
 export function resetFailedAttempts() {
   failedAttempts = 0
   return failedAttempts
+}
+
+// Add a cleanup function to clear timers when needed
+export function cleanupTracking() {
+  if (sendTimer) {
+    clearTimeout(sendTimer)
+    sendTimer = null
+  }
+
+  if (forceTimer) {
+    clearTimeout(forceTimer)
+    forceTimer = null
+  }
 }
