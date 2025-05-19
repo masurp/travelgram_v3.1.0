@@ -7,12 +7,10 @@ import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
-import { Camera, Upload } from "lucide-react"
+import { Camera, Upload, Loader2 } from "lucide-react"
 import { fileToBase64, validateImageFile } from "@/lib/fileUtils"
-// Add tracking import at the top of the file
 import { trackEvent } from "@/lib/tracking"
 
-// Add this function near the top of the file, after the imports
 function getBrowserInfo() {
   const ua = navigator.userAgent
   let browserName = "Unknown"
@@ -106,6 +104,7 @@ export default function RegistrationForm() {
   const [error, setError] = useState("")
   const [photoError, setPhotoError] = useState("")
   const [urlCondition, setUrlCondition] = useState<string | null>(null)
+  const [uploading, setUploading] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const {
     setUsername,
@@ -113,7 +112,7 @@ export default function RegistrationForm() {
     setProfilePhoto: setContextProfilePhoto,
     setBio,
     setFullName,
-    setParticipantId, // Add this line
+    setParticipantId,
     username,
     condition,
     participantId,
@@ -149,16 +148,57 @@ export default function RegistrationForm() {
     }
 
     try {
-      const base64 = await fileToBase64(file)
-      setProfilePhoto(base64)
+      setUploading(true)
       setPhotoError("")
+
+      // Create a temporary preview using base64 for immediate feedback
+      const base64Preview = await fileToBase64(file)
+      setProfilePhoto(base64Preview)
+
+      // Create form data for upload
+      const formData = new FormData()
+      formData.append("file", file)
+      formData.append("username", inputUsername || "temp-user")
+
+      // Upload to Vercel Blob
+      const response = await fetch("/api/upload/profile-image", {
+        method: "POST",
+        body: formData,
+      })
+
+      if (!response.ok) {
+        const error = await response.json()
+        throw new Error(error.error || "Failed to upload image")
+      }
+
+      const result = await response.json()
+
+      // Update with the blob URL
+      console.log("Profile photo uploaded to Blob:", result.url)
+      setProfilePhoto(result.url)
+
+      // Track the profile photo upload immediately with the URL
+      const tempUsername = inputUsername.trim() || "temp-user"
+      const tempCondition = condition || conditionMap[urlCondition] || "unknown"
+
+      trackEvent({
+        action: "upload_profile_photo",
+        username: tempUsername,
+        text: `Profile photo uploaded: ${result.url}`,
+        contentUrl: result.url,
+        condition: tempCondition,
+        participantId,
+        timestamp: new Date().toISOString(),
+      })
     } catch (error) {
-      console.error("Error converting file to base64:", error)
-      setPhotoError("Error processing image. Please try another.")
+      console.error("Error uploading profile image:", error)
+      setPhotoError("Error uploading image. Please try another.")
+      // Keep the base64 preview if upload fails
+    } finally {
+      setUploading(false)
     }
   }
 
-  // Fix the handleSubmit function to properly track the events
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
 
@@ -216,6 +256,19 @@ export default function RegistrationForm() {
       timestamp: new Date().toISOString(),
     })
 
+    // Track profile photo registration with the URL
+    if (profilePhoto) {
+      trackEvent({
+        action: "register_profile_photo",
+        username: userUsername,
+        text: `Profile photo registered: ${profilePhoto}`,
+        contentUrl: profilePhoto,
+        condition: finalCondition,
+        participantId,
+        timestamp: new Date().toISOString(),
+      })
+    }
+
     // Track browser information
     const browserInfo = getBrowserInfo()
     trackEvent({
@@ -255,12 +308,18 @@ export default function RegistrationForm() {
                 className="absolute bottom-0 right-0 bg-blue-500 text-white p-1 rounded-full cursor-pointer"
                 onClick={() => fileInputRef.current?.click()}
               >
-                <Upload className="h-4 w-4" />
+                {uploading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
               </div>
             </div>
             <input type="file" ref={fileInputRef} className="hidden" accept="image/*" onChange={handleFileChange} />
-            <Button type="button" variant="ghost" size="sm" onClick={() => fileInputRef.current?.click()}>
-              Add profile photo
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              onClick={() => fileInputRef.current?.click()}
+              disabled={uploading}
+            >
+              {uploading ? "Uploading..." : "Add profile photo"}
             </Button>
             {photoError && <p className="text-red-500 text-xs mt-1">{photoError}</p>}
           </div>
@@ -309,7 +368,7 @@ export default function RegistrationForm() {
 
           {error && <p className="text-red-500 text-sm">{error}</p>}
 
-          <Button type="submit" className="w-full">
+          <Button type="submit" className="w-full" disabled={uploading}>
             Start Browsing
           </Button>
         </form>

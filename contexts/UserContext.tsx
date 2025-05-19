@@ -2,7 +2,6 @@
 
 import { createContext, useState, useContext, type ReactNode, useEffect, useMemo, useCallback } from "react"
 import type { Post } from "@/lib/types"
-// Import the tracking function at the top of the file
 import { trackEvent } from "@/lib/tracking"
 
 type Condition = "condition1" | "condition2" | "condition3" | "condition4"
@@ -17,13 +16,13 @@ interface UserContextType {
   followedUsers: string[] // Array of usernames
   likedPosts: string[] // Array of post IDs that the user has liked
   userCreatedPosts: Post[] // Array of posts created by the user
-  participantId: string | null // Add this line
+  participantId: string | null
   setUsername: (username: string) => void
   setCondition: (condition: Condition) => void
   setProfilePhoto: (photo: string | null) => void
   setBio: (bio: string) => void
   setFullName: (name: string) => void
-  setParticipantId: (id: string) => void // Add this line
+  setParticipantId: (id: string) => void
   savePost: (postId: string) => void
   unsavePost: (postId: string) => void
   likePost: (postId: string) => void
@@ -33,10 +32,17 @@ interface UserContextType {
   followUser: (username: string) => void
   unfollowUser: (username: string) => void
   updateProfile: (updates: { bio?: string; fullName?: string; profilePhoto?: string | null }) => void
+  migrateProfilePhotoToBlob: () => Promise<string | null>
   logout: () => void
 }
 
 const UserContext = createContext<UserContextType | undefined>(undefined)
+
+// Check if a string is a base64 image
+const isBase64Image = (str: string | null): boolean => {
+  if (!str) return false
+  return str.startsWith("data:image/")
+}
 
 // Try to load user data from localStorage
 const loadUserData = () => {
@@ -72,7 +78,7 @@ const saveUserData = (data: {
   followedUsers: string[]
   likedPosts: string[]
   userCreatedPosts: Post[]
-  participantId: string | null // Add this line
+  participantId: string | null
 }) => {
   if (typeof window === "undefined") return
 
@@ -98,7 +104,7 @@ export function UserProvider({ children, initialCondition }: { children: ReactNo
   const [followedUsers, setFollowedUsers] = useState<string[]>([])
   const [likedPosts, setLikedPosts] = useState<string[]>([])
   const [userCreatedPosts, setUserCreatedPosts] = useState<Post[]>([])
-  const [participantId, setParticipantIdState] = useState<string | null>(null) // Add this line
+  const [participantId, setParticipantIdState] = useState<string | null>(null)
 
   // Load saved user data on initial render
   useEffect(() => {
@@ -113,9 +119,67 @@ export function UserProvider({ children, initialCondition }: { children: ReactNo
       setFollowedUsers(savedData.followedUsers || [])
       setLikedPosts(savedData.likedPosts || [])
       setUserCreatedPosts(savedData.userCreatedPosts || [])
-      setParticipantIdState(savedData.participantId || null) // Add this line
+      setParticipantIdState(savedData.participantId || null)
     }
   }, [initialCondition])
+
+  // Check if profile photo is base64 and migrate if needed
+  useEffect(() => {
+    const checkAndMigrateProfilePhoto = async () => {
+      if (username && profilePhoto && isBase64Image(profilePhoto)) {
+        console.log("UserContext - Detected base64 profile photo, attempting migration")
+        try {
+          const migratedPhoto = await migrateProfilePhotoToBlob()
+          if (migratedPhoto) {
+            console.log("UserContext - Successfully migrated profile photo to Blob")
+          }
+        } catch (error) {
+          console.error("UserContext - Failed to migrate profile photo:", error)
+        }
+      }
+    }
+
+    checkAndMigrateProfilePhoto()
+  }, [username, profilePhoto])
+
+  // Function to migrate base64 profile photo to Blob
+  const migrateProfilePhotoToBlob = useCallback(async (): Promise<string | null> => {
+    if (!username || !profilePhoto || !isBase64Image(profilePhoto)) {
+      return null
+    }
+
+    try {
+      // Convert base64 to blob
+      const res = await fetch(profilePhoto)
+      const blob = await res.blob()
+
+      // Create form data
+      const formData = new FormData()
+      formData.append("file", blob, "profile.jpg")
+      formData.append("username", username)
+
+      // Upload to Vercel Blob
+      const response = await fetch("/api/upload/profile-image", {
+        method: "POST",
+        body: formData,
+      })
+
+      if (!response.ok) {
+        throw new Error("Failed to upload profile image to Blob")
+      }
+
+      const result = await response.json()
+      const blobUrl = result.url
+
+      // Update profile photo with blob URL
+      setProfilePhoto(blobUrl)
+
+      return blobUrl
+    } catch (error) {
+      console.error("Error migrating profile photo to Blob:", error)
+      return null
+    }
+  }, [username, profilePhoto])
 
   // Use useCallback for all functions to prevent unnecessary re-renders
   const setUsername = useCallback(
@@ -252,7 +316,7 @@ export function UserProvider({ children, initialCondition }: { children: ReactNo
             username,
             postOwner: userToFollow,
             condition,
-            participantId, // Add this line
+            participantId,
           })
         }
       }
@@ -295,7 +359,7 @@ export function UserProvider({ children, initialCondition }: { children: ReactNo
           username,
           postOwner: userToUnfollow,
           condition,
-          participantId, // Add this line
+          participantId,
         })
       }
     },
@@ -468,7 +532,7 @@ export function UserProvider({ children, initialCondition }: { children: ReactNo
           text: post.caption,
           contentUrl: post.contentUrl,
           condition,
-          participantId, // Add this line
+          participantId,
         })
       }
     },
@@ -557,7 +621,7 @@ export function UserProvider({ children, initialCondition }: { children: ReactNo
           action: "update_profile",
           username,
           condition,
-          participantId, // Add this line
+          participantId,
         })
       }
     },
@@ -624,13 +688,13 @@ export function UserProvider({ children, initialCondition }: { children: ReactNo
       followedUsers,
       likedPosts,
       userCreatedPosts,
-      participantId, // Add this line
+      participantId,
       setUsername,
       setCondition,
       setProfilePhoto,
       setBio,
       setFullName,
-      setParticipantId, // Add this line
+      setParticipantId,
       savePost,
       unsavePost,
       likePost,
@@ -640,6 +704,7 @@ export function UserProvider({ children, initialCondition }: { children: ReactNo
       followUser,
       unfollowUser,
       updateProfile,
+      migrateProfilePhotoToBlob,
       logout,
     }),
     [
@@ -652,13 +717,13 @@ export function UserProvider({ children, initialCondition }: { children: ReactNo
       followedUsers,
       likedPosts,
       userCreatedPosts,
-      participantId, // Add this line
+      participantId,
       setUsername,
       setCondition,
       setProfilePhoto,
       setBio,
       setFullName,
-      setParticipantId, // Add this line
+      setParticipantId,
       savePost,
       unsavePost,
       likePost,
@@ -668,6 +733,7 @@ export function UserProvider({ children, initialCondition }: { children: ReactNo
       followUser,
       unfollowUser,
       updateProfile,
+      migrateProfilePhotoToBlob,
       logout,
     ],
   )
