@@ -2,6 +2,10 @@
 
 import { useState, useEffect } from "react"
 import { Button } from "@/components/ui/button"
+import { Calendar } from "@/components/ui/calendar"
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
+import { format } from "date-fns"
+import { CalendarIcon } from "lucide-react"
 
 interface TrackingFile {
   filename: string
@@ -19,6 +23,13 @@ export default function TrackingDashboard() {
   const [loadingEvents, setLoadingEvents] = useState(false)
   const [exportLoading, setExportLoading] = useState(false)
   const [totalFiles, setTotalFiles] = useState(0)
+
+  // Export options
+  const [exportFormat, setExportFormat] = useState<"json" | "csv">("json")
+  const [exportLimit, setExportLimit] = useState(10000)
+  const [startDate, setStartDate] = useState<Date | null>(null)
+  const [endDate, setEndDate] = useState<Date | null>(null)
+  const [showExportOptions, setShowExportOptions] = useState(false)
 
   useEffect(() => {
     async function fetchFiles() {
@@ -80,8 +91,26 @@ export default function TrackingDashboard() {
     setError(null)
 
     try {
-      console.log("Exporting all events...")
-      const response = await fetch("/api/export-tracking")
+      console.log("Exporting events...")
+
+      // Build query parameters
+      let url = `/api/export-tracking?format=${exportFormat}&limit=${exportLimit}`
+      if (startDate) {
+        url += `&startDate=${startDate.toISOString()}`
+      }
+      if (endDate) {
+        url += `&endDate=${endDate.toISOString()}`
+      }
+
+      if (exportFormat === "csv") {
+        // For CSV, download directly
+        window.location.href = url
+        setExportLoading(false)
+        return
+      }
+
+      // For JSON, fetch and create a download
+      const response = await fetch(url)
 
       if (!response.ok) {
         throw new Error(`API responded with status ${response.status}`)
@@ -92,14 +121,14 @@ export default function TrackingDashboard() {
 
       // Create a downloadable JSON file
       const blob = new Blob([JSON.stringify(data.events || [], null, 2)], { type: "application/json" })
-      const url = URL.createObjectURL(blob)
+      const blobUrl = URL.createObjectURL(blob)
       const a = document.createElement("a")
-      a.href = url
+      a.href = blobUrl
       a.download = `tracking-export-${new Date().toISOString().slice(0, 10)}.json`
       document.body.appendChild(a)
       a.click()
       document.body.removeChild(a)
-      URL.revokeObjectURL(url)
+      URL.revokeObjectURL(blobUrl)
     } catch (error) {
       console.error("Failed to export events:", error)
       setError(`Error exporting events: ${error instanceof Error ? error.message : String(error)}`)
@@ -144,15 +173,99 @@ export default function TrackingDashboard() {
         </div>
       )}
 
-      <div className="mb-4 flex gap-2">
-        <Button onClick={exportAllEvents} disabled={exportLoading} className="bg-blue-600 hover:bg-blue-700 text-white">
-          {exportLoading ? "Exporting..." : "Export All Events"}
+      <div className="mb-4 flex flex-wrap gap-2">
+        <Button onClick={() => setShowExportOptions(!showExportOptions)} variant="outline">
+          {showExportOptions ? "Hide Export Options" : "Show Export Options"}
         </Button>
 
         <Button onClick={refreshFiles} disabled={loading} variant="outline">
           {loading ? "Refreshing..." : "Refresh Files"}
         </Button>
       </div>
+
+      {showExportOptions && (
+        <div className="mb-6 p-4 border rounded bg-gray-50">
+          <h3 className="text-lg font-semibold mb-3">Export Options</h3>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-4">
+            <div>
+              <label className="block text-sm font-medium mb-1">Format</label>
+              <select
+                value={exportFormat}
+                onChange={(e) => setExportFormat(e.target.value as "json" | "csv")}
+                className="w-full border rounded px-3 py-2"
+              >
+                <option value="json">JSON</option>
+                <option value="csv">CSV</option>
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium mb-1">Max Events</label>
+              <input
+                type="number"
+                value={exportLimit}
+                onChange={(e) => setExportLimit(Number.parseInt(e.target.value) || 10000)}
+                min="1"
+                max="100000"
+                className="w-full border rounded px-3 py-2"
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium mb-1">Start Date</label>
+              <Popover>
+                <PopoverTrigger asChild>
+                  <Button variant="outline" className="w-full justify-start text-left font-normal">
+                    <CalendarIcon className="mr-2 h-4 w-4" />
+                    {startDate ? format(startDate, "PPP") : "Pick a date"}
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent className="w-auto p-0">
+                  <Calendar mode="single" selected={startDate} onSelect={setStartDate} initialFocus />
+                </PopoverContent>
+              </Popover>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium mb-1">End Date</label>
+              <Popover>
+                <PopoverTrigger asChild>
+                  <Button variant="outline" className="w-full justify-start text-left font-normal">
+                    <CalendarIcon className="mr-2 h-4 w-4" />
+                    {endDate ? format(endDate, "PPP") : "Pick a date"}
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent className="w-auto p-0">
+                  <Calendar mode="single" selected={endDate} onSelect={setEndDate} initialFocus />
+                </PopoverContent>
+              </Popover>
+            </div>
+          </div>
+
+          <div className="flex gap-2">
+            <Button
+              onClick={exportAllEvents}
+              disabled={exportLoading}
+              className="bg-blue-600 hover:bg-blue-700 text-white"
+            >
+              {exportLoading ? "Exporting..." : `Export Events (${exportFormat.toUpperCase()})`}
+            </Button>
+
+            <Button
+              variant="outline"
+              onClick={() => {
+                setStartDate(null)
+                setEndDate(null)
+                setExportLimit(10000)
+                setExportFormat("json")
+              }}
+            >
+              Reset Options
+            </Button>
+          </div>
+        </div>
+      )}
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <div className="border rounded p-4">
