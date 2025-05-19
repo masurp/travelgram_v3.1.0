@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
-import { fileToBase64, validateImageFile } from "@/lib/fileUtils"
+import { validateImageFile } from "@/lib/fileUtils"
 import EmojiPicker from "./emoji-picker"
 import { useUser } from "@/contexts/UserContext"
 
@@ -33,6 +33,7 @@ export default function EditProfileModal({
   const [newFullName, setNewFullName] = useState(fullName || username)
   const [newBio, setNewBio] = useState(bio)
   const [photoError, setPhotoError] = useState("")
+  const [uploading, setUploading] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const bioRef = useRef<HTMLTextAreaElement>(null)
   const { updateProfile } = useUser()
@@ -53,13 +54,35 @@ export default function EditProfileModal({
     }
 
     try {
-      const base64 = await fileToBase64(file)
-      console.log("EditProfileModal - New profile photo set:", base64.substring(0, 50) + "...")
-      setNewProfilePhoto(base64)
+      setUploading(true)
+
+      // Create form data
+      const formData = new FormData()
+      formData.append("file", file)
+      formData.append("username", username)
+
+      // Upload to Vercel Blob
+      const response = await fetch("/api/upload/profile-image", {
+        method: "POST",
+        body: formData,
+      })
+
+      if (!response.ok) {
+        const error = await response.json()
+        throw new Error(error.error || "Failed to upload image")
+      }
+
+      const result = await response.json()
+
+      // Set the image URL from Blob storage
+      console.log("EditProfileModal - New profile photo set:", result.url)
+      setNewProfilePhoto(result.url)
       setPhotoError("")
     } catch (error) {
-      console.error("Error converting file to base64:", error)
-      setPhotoError("Error processing image. Please try another.")
+      console.error("Error uploading profile image:", error)
+      setPhotoError("Error uploading image. Please try again.")
+    } finally {
+      setUploading(false)
     }
   }
 
@@ -126,7 +149,7 @@ export default function EditProfileModal({
             <div className="relative mb-2">
               <Avatar className="h-24 w-24 cursor-pointer" onClick={() => fileInputRef.current?.click()}>
                 {newProfilePhoto ? (
-                  <AvatarImage src={newProfilePhoto} alt="Profile" />
+                  <AvatarImage src={newProfilePhoto || "/placeholder.svg"} alt="Profile" />
                 ) : (
                   <AvatarFallback className="bg-blue-100 text-blue-600 text-xl">
                     {username.substring(0, 2).toUpperCase()}
@@ -147,8 +170,9 @@ export default function EditProfileModal({
               size="sm"
               onClick={() => fileInputRef.current?.click()}
               className="dark:text-white"
+              disabled={uploading}
             >
-              Change profile photo
+              {uploading ? "Uploading..." : "Change profile photo"}
             </Button>
             {photoError && <p className="text-red-500 text-xs mt-1">{photoError}</p>}
           </div>

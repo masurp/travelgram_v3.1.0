@@ -10,7 +10,7 @@ import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { useUser } from "@/contexts/UserContext"
 import type { Post } from "@/lib/types"
-import { fileToBase64, validateImageFile } from "@/lib/fileUtils"
+import { validateImageFile } from "@/lib/fileUtils"
 import EmojiPicker from "./emoji-picker"
 
 interface CreatePostModalProps {
@@ -27,6 +27,7 @@ export default function CreatePostModal({ onClose, onCreatePost }: CreatePostMod
   const [imageError, setImageError] = useState(false)
   const [uploadError, setUploadError] = useState("")
   const [urlError, setUrlError] = useState("")
+  const [uploading, setUploading] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const captionRef = useRef<HTMLTextAreaElement>(null)
   const { username, profilePhoto } = useUser()
@@ -64,12 +65,34 @@ export default function CreatePostModal({ onClose, onCreatePost }: CreatePostMod
     }
 
     try {
-      const base64 = await fileToBase64(file)
-      handleImageSelect(base64)
+      setUploading(true)
+
+      // Create form data
+      const formData = new FormData()
+      formData.append("file", file)
+      formData.append("username", username)
+
+      // Upload to Vercel Blob
+      const response = await fetch("/api/upload/post-image", {
+        method: "POST",
+        body: formData,
+      })
+
+      if (!response.ok) {
+        const error = await response.json()
+        throw new Error(error.error || "Failed to upload image")
+      }
+
+      const result = await response.json()
+
+      // Use the image URL from Blob storage
+      handleImageSelect(result.url)
       setUploadError("")
     } catch (error) {
-      console.error("Error converting file to base64:", error)
-      setUploadError("Error processing image. Please try another.")
+      console.error("Error uploading post image:", error)
+      setUploadError("Error uploading image. Please try again.")
+    } finally {
+      setUploading(false)
     }
   }
 
@@ -152,6 +175,7 @@ export default function CreatePostModal({ onClose, onCreatePost }: CreatePostMod
                   />
                 </div>
                 {uploadError && <p className="text-red-500 text-sm">{uploadError}</p>}
+                {uploading && <p className="text-blue-500 text-sm">Uploading image...</p>}
               </div>
 
               {/* Divider */}
