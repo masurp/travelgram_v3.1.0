@@ -1,135 +1,131 @@
 import { NextResponse } from "next/server"
-import { list } from "@vercel/blob"
-
-export const config = {
-  runtime: "nodejs",
-  maxDuration: 60, // Extend the function timeout to 60 seconds
-}
+import { get } from "@vercel/blob"
+import { getTrackingIndex } from "@/lib/tracking-index"
 
 export async function GET(request: Request) {
   try {
-    console.log("Exporting all tracking data...")
-
-    // Get query parameters
     const { searchParams } = new URL(request.url)
     const format = searchParams.get("format") || "json"
     const limit = Number.parseInt(searchParams.get("limit") || "10000", 10)
-    const startDate = searchParams.get("startDate") ? new Date(searchParams.get("startDate") as string) : null
-    const endDate = searchParams.get("endDate") ? new Date(searchParams.get("endDate") as string) : null
+    const startDateParam = searchParams.get("startDate")
+    const endDateParam = searchParams.get("endDate")
 
-    // List all tracking files
-    const blobs = await list({ prefix: "tracking-events/" })
-    console.log(`Found ${blobs.blobs.length} tracking files`)
+    // Parse date parameters if provided
+    const startDate = startDateParam ? new Date(startDateParam) : null
+    const endDate = endDateParam ? new Date(endDateParam) : null
 
-    // Sort blobs by uploadedAt (newest first) to prioritize recent data
-    blobs.blobs.sort((a, b) => new Date(b.uploadedAt).getTime() - new Date(a.uploadedAt).getTime())
+    // Get the tracking index
+    const index = await getTrackingIndex()
 
-    // Process files in chunks to avoid memory issues
-    const allEvents = []
-    let totalProcessed = 0
-    let totalEvents = 0
+    if (!index) {
+      return NextResponse.json({ error: "Failed to retrieve tracking index" }, { status: 500 })
+    }
 
-    for (const blob of blobs.blobs) {
+    // Get all events from all files
+    const allEvents: any[] = []
+
+    // Process files in order (newest first)
+    for (const file of index.files) {
       // Stop if we've reached the limit
-      if (totalEvents >= limit) {
-        console.log(`Reached limit of ${limit} events, stopping`)
-        break
-      }
+      if (allEvents.length >= limit) break
 
       try {
-        console.log(`Fetching events from ${blob.pathname}`)
+        // Get the blob
+        const blob = await get(file.pathname)
+        if (!blob) continue
+
+        // Fetch the content
         const response = await fetch(blob.url)
-
-        if (!response.ok) {
-          console.error(`Error response from ${blob.pathname}: ${response.status}`)
-          continue
-        }
-
-        // Parse events from this file
-        const events = await response.json()
-        console.log(`Retrieved ${events.length} events from ${blob.pathname}`)
+        const fileEvents = await response.json()
 
         // Filter events by date if needed
-        const filteredEvents = events.filter((event) => {
+        const filteredEvents = fileEvents.filter((event: any) => {
           const eventDate = new Date(event.timestamp)
+
           if (startDate && eventDate < startDate) return false
           if (endDate && eventDate > endDate) return false
+
           return true
         })
 
-        // Add events to our collection, up to the limit
-        const eventsToAdd = filteredEvents.slice(0, limit - totalEvents)
-        allEvents.push(...eventsToAdd)
-        totalEvents += eventsToAdd.length
+        // Add events to our collection
+        allEvents.push(...filteredEvents)
 
-        console.log(`Added ${eventsToAdd.length} events, total now: ${totalEvents}`)
+        // Check if we've reached the limit
+        if (allEvents.length >= limit) {
+          allEvents.splice(limit) // Trim to limit
+          break
+        }
       } catch (error) {
-        console.error(`Error fetching events from ${blob.pathname}:`, error)
-      }
-
-      totalProcessed++
-
-      // Process in batches of 10 files to avoid timeouts
-      if (totalProcessed % 10 === 0) {
-        console.log(`Processed ${totalProcessed}/${blobs.blobs.length} files`)
-        // Give the event loop a chance to breathe
-        await new Promise((resolve) => setTimeout(resolve, 100))
+        console.error(`Error processing file ${file.pathname}:`, error)
+        // Continue with other files
       }
     }
 
-    console.log(`Total events collected: ${allEvents.length}`)
+    // Sort all events by timestamp (newest first)
+    allEvents.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
 
-    // Sort events by timestamp
-    allEvents.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime())
-
-    // Return based on requested format
+    // If CSV format is requested, convert to CSV
     if (format === "csv") {
-      // Generate CSV
-      const headers = [
-        "timestamp",
-        "action",
-        "username",
-        "postId",
-        "postOwner",
-        "text",
-        "condition",
-        "contentUrl",
-        "participantId",
-      ]
+      // Generate CSV content
+      const csvContent = generateCsv(allEvents)
 
-      let csv = headers.join(",") + "\n"
-
-      for (const event of allEvents) {
-        const row = headers.map((header) => {
-          const value = event[header]
-          if (value === null || value === undefined) return ""
-          // Escape commas and quotes in string values
-          if (typeof value === "string") return `"${value.replace(/"/g, '""')}"`
-          return value
-        })
-        csv += row.join(",") + "\n"
-      }
-
-      return new NextResponse(csv, {
+      // Return as a downloadable file
+      return new NextResponse(csvContent, {
         headers: {
           "Content-Type": "text/csv",
           "Content-Disposition": `attachment; filename="tracking-export-${new Date().toISOString().slice(0, 10)}.csv"`,
         },
       })
-    } else {
-      // Return JSON (default)
-      return NextResponse.json({
-        events: allEvents,
-        meta: {
-          totalFiles: blobs.blobs.length,
-          filesProcessed: totalProcessed,
-          totalEvents: allEvents.length,
-          limit,
-        },
-      })
     }
+
+    // Return JSON by default
+    return NextResponse.json({ events: allEvents })
   } catch (error) {
     console.error("Error exporting tracking data:", error)
     return NextResponse.json({ error: String(error) }, { status: 500 })
   }
+}
+
+// Helper function to generate CSV
+function generateCsv(events: any[]): string {
+  if (events.length === 0) return "No events found"
+
+  // Get all possible headers from all events
+  const allKeys = new Set<string>()
+  events.forEach((event) => {
+    Object.keys(event).forEach((key) => allKeys.add(key))
+  })
+
+  // Convert Set to Array and ensure timestamp and action are first
+  const headers = Array.from(allKeys)
+  headers.sort((a, b) => {
+    if (a === "timestamp") return -1
+    if (b === "timestamp") return 1
+    if (a === "action") return -1
+    if (b === "action") return 1
+    if (a === "username") return -1
+    if (b === "username") return 1
+    return a.localeCompare(b)
+  })
+
+  // Create CSV header row
+  let csv = headers.join(",") + "\n"
+
+  // Add each event as a row
+  events.forEach((event) => {
+    const row = headers.map((header) => {
+      const value = event[header]
+
+      // Handle different value types
+      if (value === null || value === undefined) return ""
+      if (typeof value === "object") return `"${JSON.stringify(value).replace(/"/g, '""')}"`
+      if (typeof value === "string") return `"${value.replace(/"/g, '""')}"`
+      return value
+    })
+
+    csv += row.join(",") + "\n"
+  })
+
+  return csv
 }

@@ -1,58 +1,35 @@
 import { NextResponse } from "next/server"
 import { put } from "@vercel/blob"
-import type { TrackingData } from "@/lib/tracking"
+import { updateTrackingIndex } from "@/lib/tracking-index"
 
 export async function POST(request: Request) {
   try {
-    const { events } = (await request.json()) as { events: TrackingData[] }
+    const { events } = await request.json()
 
     if (!events || !Array.isArray(events) || events.length === 0) {
       return NextResponse.json({ error: "No events provided" }, { status: 400 })
     }
 
-    // Log events for debugging
-    console.log(`Received ${events.length} tracking events`)
-
-    // Create a unique filename with timestamp and batch ID
+    // Create a filename with timestamp and random string for uniqueness
     const timestamp = new Date().toISOString().replace(/[:.]/g, "-")
-    const batchId = Math.random().toString(36).substring(2, 10)
-    const filename = `tracking-events/${timestamp}-${batchId}.json`
+    const randomId = Math.random().toString(36).substring(2, 10)
+    const filename = `tracking-events/${timestamp}-${randomId}.json`
 
-    try {
-      // Store events as JSON in Vercel Blob
-      const blob = await put(filename, JSON.stringify(events), {
-        access: "public", // This is required
-        contentType: "application/json",
-      })
+    // Store the events in Vercel Blob
+    const blob = await put(filename, JSON.stringify(events), {
+      contentType: "application/json",
+    })
 
-      console.log(`Successfully stored events in Blob: ${blob.url}`)
+    console.log(`Stored ${events.length} events at ${blob.url}`)
 
-      return NextResponse.json({
-        success: true,
-        message: "Events stored in Blob",
-        count: events.length,
-        blobUrl: blob.url,
-      })
-    } catch (error) {
-      console.error("Failed to store events in Blob:", error)
-      return NextResponse.json(
-        {
-          success: false,
-          error: "Failed to store events",
-          details: String(error),
-        },
-        { status: 200 }, // Still return 200 to prevent client retries
-      )
-    }
+    // Update the tracking index (don't await to avoid blocking)
+    updateTrackingIndex().catch((error) => {
+      console.error("Failed to update tracking index:", error)
+    })
+
+    return NextResponse.json({ success: true, eventsStored: events.length, url: blob.url })
   } catch (error) {
-    console.error("Error processing tracking events:", error)
-    return NextResponse.json(
-      {
-        success: false,
-        error: "Events logged but not processed",
-        details: String(error),
-      },
-      { status: 200 },
-    )
+    console.error("Error storing tracking events:", error)
+    return NextResponse.json({ error: String(error) }, { status: 500 })
   }
 }

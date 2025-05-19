@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server"
 import { list, del } from "@vercel/blob"
+import { updateTrackingIndex } from "@/lib/tracking-index"
 
 export async function POST(request: Request) {
   try {
@@ -15,12 +16,15 @@ export async function POST(request: Request) {
     // List all tracking files
     const blobs = await list({ prefix: "tracking-events/" })
 
-    if (blobs.blobs.length === 0) {
+    // Filter out the index file itself - we'll update it after
+    const trackingFiles = blobs.blobs.filter((blob) => !blob.pathname.endsWith("/index.json"))
+
+    if (trackingFiles.length === 0) {
       return NextResponse.json({ message: "No tracking files found to delete" })
     }
 
     // Delete each file
-    const deletionPromises = blobs.blobs.map(async (blob) => {
+    const deletionPromises = trackingFiles.map(async (blob) => {
       try {
         await del(blob.url)
         return { path: blob.pathname, success: true }
@@ -36,6 +40,9 @@ export async function POST(request: Request) {
     // Count successes and failures
     const successes = results.filter((r) => r.success).length
     const failures = results.filter((r) => !r.success).length
+
+    // Update the index after deletion
+    await updateTrackingIndex()
 
     return NextResponse.json({
       message: `Deleted ${successes} tracking files${failures > 0 ? `, ${failures} failed` : ""}`,
