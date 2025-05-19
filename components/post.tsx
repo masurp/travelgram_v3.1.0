@@ -70,10 +70,12 @@ export default memo(function Post({
   const [heartPulse, setHeartPulse] = useState(false)
   const [isMobile, setIsMobile] = useState(false)
   const [currentPhotoIndex, setCurrentPhotoIndex] = useState(post.currentPhotoIndex || 0)
+  // const [hasTrackedView, setHasTrackedView] = useState(false)
   const [hasTrackedView, setHasTrackedView] = useState(false)
   const videoRef = useRef<HTMLVideoElement>(null)
   const commentInputRef = useRef<HTMLInputElement>(null)
   const postRef = useRef<HTMLDivElement>(null)
+  const lastVisibleTimestamp = useRef<number>(0)
   const {
     username,
     profilePhoto,
@@ -103,27 +105,36 @@ export default memo(function Post({
 
   // Set up intersection observer to track when post is actually visible
   useEffect(() => {
-    if (!postRef.current || hasTrackedView) return
+    if (!postRef.current) return
+
+    // Track when the post was last visible to prevent rapid re-tracking
+    // const lastVisibleTimestamp = useRef<number>(0)
+    // Minimum time (in ms) between tracking the same post (3 seconds)
+    const MIN_TRACKING_INTERVAL = 3000
 
     const observer = new IntersectionObserver(
       (entries) => {
         const entry = entries[0]
+        const now = Date.now()
+
         if (entry.isIntersecting) {
-          // Only track the view when the post is actually visible
-          if (post.id && condition) {
-            console.log(`Tracking post view for post ${post.id} by ${post.username}`)
-            trackEvent({
-              action: "view_post",
-              username,
-              postId: post.id,
-              postOwner: post.username,
-              condition,
-              participantId,
-            })
+          // Check if enough time has passed since last tracking
+          if (now - lastVisibleTimestamp.current > MIN_TRACKING_INTERVAL) {
+            // Track the view when the post becomes visible
+            if (post.id && condition) {
+              console.log(`Tracking post view for post ${post.id} by ${post.username}`)
+              trackEvent({
+                action: "view_post",
+                username,
+                postId: post.id,
+                postOwner: post.username,
+                condition,
+                participantId,
+              })
+            }
+            // Update the timestamp
+            lastVisibleTimestamp.current = now
           }
-          setHasTrackedView(true)
-          // Once tracked, no need to keep observing
-          observer.disconnect()
         }
       },
       {
@@ -138,7 +149,7 @@ export default memo(function Post({
     return () => {
       observer.disconnect()
     }
-  }, [postRef, hasTrackedView, post.id, post.username, username, condition])
+  }, [postRef, post.id, post.username, username, condition])
 
   // Check if this post has multiple photos
   const hasMultiplePhotos = post.contentUrls && post.contentUrls.length > 1
@@ -479,7 +490,7 @@ export default memo(function Post({
               {avatarError ? (
                 <AvatarFallback>{post.username.substring(0, 2).toUpperCase()}</AvatarFallback>
               ) : (
-                <AvatarImage src={avatarUrl} alt={post.username} onError={handleAvatarError} />
+                <AvatarImage src={avatarUrl || "/placeholder.svg"} alt={post.username} onError={handleAvatarError} />
               )}
             </Avatar>
             <div className="flex items-center gap-2">
