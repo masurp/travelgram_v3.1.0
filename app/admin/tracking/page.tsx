@@ -5,11 +5,10 @@ import { Button } from "@/components/ui/button"
 import { Calendar } from "@/components/ui/calendar"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { format } from "date-fns"
-import { CalendarIcon, Trash2, RefreshCw } from "lucide-react"
-import type { TrackingIndex } from "@/lib/tracking-index"
+import { CalendarIcon, Trash2 } from "lucide-react"
 
 interface TrackingFile {
-  pathname: string
+  filename: string
   url: string
   size: number
   uploadedAt: string
@@ -27,8 +26,6 @@ export default function TrackingDashboard() {
   const [deleteLoading, setDeleteLoading] = useState(false)
   const [deleteConfirm, setDeleteConfirm] = useState(false)
   const [deleteResult, setDeleteResult] = useState<string | null>(null)
-  const [lastIndexUpdate, setLastIndexUpdate] = useState<string | null>(null)
-  const [indexLoading, setIndexLoading] = useState(false)
 
   // Export options
   const [exportFormat, setExportFormat] = useState<"json" | "csv">("json")
@@ -38,62 +35,35 @@ export default function TrackingDashboard() {
   const [showExportOptions, setShowExportOptions] = useState(false)
 
   useEffect(() => {
-    fetchTrackingIndex()
+    async function fetchFiles() {
+      try {
+        setError(null)
+        console.log("Fetching tracking files...")
+        const response = await fetch("/api/tracking-data")
+
+        if (!response.ok) {
+          throw new Error(`API responded with status ${response.status}`)
+        }
+
+        const data = await response.json()
+        console.log("API response:", data)
+
+        setFiles(data.files || [])
+        setTotalFiles(data.totalFiles || 0)
+
+        if (data.files?.length === 0) {
+          console.log("No files returned from API")
+        }
+      } catch (error) {
+        console.error("Failed to fetch tracking files:", error)
+        setError(`Error fetching files: ${error instanceof Error ? error.message : String(error)}`)
+      } finally {
+        setLoading(false)
+      }
+    }
+
+    fetchFiles()
   }, [])
-
-  async function fetchTrackingIndex(forceUpdate = false) {
-    setLoading(true)
-    setError(null)
-
-    try {
-      console.log("Fetching tracking index...")
-      const response = await fetch(`/api/tracking-index${forceUpdate ? "?forceUpdate=true" : ""}`)
-
-      if (!response.ok) {
-        throw new Error(`API responded with status ${response.status}`)
-      }
-
-      const data = (await response.json()) as TrackingIndex
-      console.log("Tracking index:", data)
-
-      setFiles(data.files || [])
-      setTotalFiles(data.files.length || 0)
-      setLastIndexUpdate(data.lastUpdated)
-
-      if (data.files.length === 0) {
-        console.log("No files in tracking index")
-      }
-    } catch (error) {
-      console.error("Failed to fetch tracking index:", error)
-      setError(`Error fetching index: ${error instanceof Error ? error.message : String(error)}`)
-
-      // Fall back to the old method if index fails
-      fetchFilesLegacy()
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  // Legacy method as fallback
-  async function fetchFilesLegacy() {
-    try {
-      console.log("Falling back to legacy file listing...")
-      const response = await fetch("/api/tracking-data")
-
-      if (!response.ok) {
-        throw new Error(`API responded with status ${response.status}`)
-      }
-
-      const data = await response.json()
-      console.log("Legacy API response:", data)
-
-      setFiles(data.files || [])
-      setTotalFiles(data.totalFiles || 0)
-    } catch (error) {
-      console.error("Failed to fetch tracking files (legacy):", error)
-      setError(`Error fetching files: ${error instanceof Error ? error.message : String(error)}`)
-    }
-  }
 
   async function fetchEvents(filename: string) {
     setLoadingEvents(true)
@@ -170,19 +140,29 @@ export default function TrackingDashboard() {
     }
   }
 
-  // Function to manually update the index
-  async function updateIndex() {
-    setIndexLoading(true)
+  // Function to manually trigger a refresh
+  async function refreshFiles() {
+    setLoading(true)
     setError(null)
 
     try {
-      console.log("Manually updating tracking index...")
-      await fetchTrackingIndex(true)
+      console.log("Manually refreshing tracking files...")
+      const response = await fetch("/api/tracking-data")
+
+      if (!response.ok) {
+        throw new Error(`API responded with status ${response.status}`)
+      }
+
+      const data = await response.json()
+      console.log("Refresh response:", data)
+
+      setFiles(data.files || [])
+      setTotalFiles(data.totalFiles || 0)
     } catch (error) {
-      console.error("Failed to update tracking index:", error)
-      setError(`Error updating index: ${error instanceof Error ? error.message : String(error)}`)
+      console.error("Failed to refresh tracking files:", error)
+      setError(`Error refreshing files: ${error instanceof Error ? error.message : String(error)}`)
     } finally {
-      setIndexLoading(false)
+      setLoading(false)
     }
   }
 
@@ -221,8 +201,8 @@ export default function TrackingDashboard() {
       console.log("Delete response:", data)
       setDeleteResult(data.message)
 
-      // Refresh the index after deletion
-      await fetchTrackingIndex(true)
+      // Refresh the file list after deletion
+      await refreshFiles()
 
       // Reset the confirmation
       setDeleteConfirm(false)
@@ -255,9 +235,8 @@ export default function TrackingDashboard() {
           {showExportOptions ? "Hide Export Options" : "Show Export Options"}
         </Button>
 
-        <Button onClick={updateIndex} disabled={indexLoading} variant="outline">
-          <RefreshCw className={`w-4 h-4 mr-2 ${indexLoading ? "animate-spin" : ""}`} />
-          {indexLoading ? "Updating..." : "Update Index"}
+        <Button onClick={refreshFiles} disabled={loading} variant="outline">
+          {loading ? "Refreshing..." : "Refresh Files"}
         </Button>
 
         <Button
@@ -270,10 +249,6 @@ export default function TrackingDashboard() {
           {deleteLoading ? "Deleting..." : deleteConfirm ? "Click again to confirm" : "Delete All Tracking Data"}
         </Button>
       </div>
-
-      {lastIndexUpdate && (
-        <p className="text-sm text-gray-500 mb-4">Index last updated: {new Date(lastIndexUpdate).toLocaleString()}</p>
-      )}
 
       {showExportOptions && (
         <div className="mb-6 p-4 border rounded bg-gray-50">
@@ -381,10 +356,10 @@ export default function TrackingDashboard() {
           ) : (
             <ul className="space-y-2">
               {files.map((file) => (
-                <li key={file.pathname} className="border-b pb-2">
+                <li key={file.filename} className="border-b pb-2">
                   <p className="text-sm text-gray-600">{new Date(file.uploadedAt).toLocaleString()}</p>
-                  <p className="truncate">{file.pathname}</p>
-                  <Button variant="outline" size="sm" className="mt-1" onClick={() => fetchEvents(file.pathname)}>
+                  <p className="truncate">{file.filename}</p>
+                  <Button variant="outline" size="sm" className="mt-1" onClick={() => fetchEvents(file.filename)}>
                     View Events
                   </Button>
                 </li>
