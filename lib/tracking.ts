@@ -26,9 +26,6 @@ export type TrackingAction =
   | "upload_profile_photo"
   | "delete_post"
   | "edit_post"
-  | "session_milestone"
-  | "return_to_survey"
-  | "continue_exploring"
 
 // Define the tracking data structure
 export interface TrackingData {
