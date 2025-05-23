@@ -618,15 +618,6 @@ export default function Feed() {
                 </p>
               )}
             </div>
-            <div className="mt-8 text-center">
-              <p className="mb-4 text-gray-700 dark:text-gray-300">
-                If you have finished browsing through the feed, please click the button below or close the current tab
-                in your Browser to return to the survey.
-              </p>
-              <Button onClick={handleCloseTab} className="bg-red-500 hover:bg-red-600 text-white">
-                Close Tab
-              </Button>
-            </div>
           </>
         )}
       </div>
