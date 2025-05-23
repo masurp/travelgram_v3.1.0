@@ -4,12 +4,50 @@ import { useEffect, useState } from "react"
 import { createPortal } from "react-dom"
 import { Button } from "@/components/ui/button"
 import { trackEvent } from "@/lib/tracking"
+import { useIsMobile } from "@/hooks/use-mobile"
+import { useUser } from "@/contexts/UserContext"
 
 export default function SessionTimer() {
   const [sessionStartTime] = useState(Date.now())
   const [showCompletionModal, setShowCompletionModal] = useState(false)
   const [beforeUnloadActive, setBeforeUnloadActive] = useState(true)
   const [showReturnButton, setShowReturnButton] = useState(false)
+  const isMobile = useIsMobile()
+
+  // Safely access UserContext if available
+  const [userContext, setUserContext] = useState<{
+    username?: string
+    condition?: string | null
+    participantId?: string | null
+  }>({})
+
+  // Try to get user context if available
+  useEffect(() => {
+    // Dynamically import to avoid the "must be used within a UserProvider" error
+    const getUserContext = async () => {
+      try {
+        // Only import and use if we're in the browser
+        if (typeof window !== "undefined") {
+          try {
+            const context = useUser()
+            setUserContext({
+              username: context.username,
+              condition: context.condition,
+              participantId: context.participantId,
+            })
+          } catch (error) {
+            // UserProvider not available, continue without user context
+            console.log("UserContext not available, session events will have limited data")
+          }
+        }
+      } catch (error) {
+        // Module import failed or context not available
+        console.log("Could not access UserContext, continuing without user data")
+      }
+    }
+
+    getUserContext()
+  }, [])
 
   // Handle beforeunload event for the first 3 minutes
   useEffect(() => {
@@ -41,7 +79,10 @@ export default function SessionTimer() {
         // Track that the 3-minute mark was reached
         trackEvent({
           action: "session_milestone",
+          username: userContext.username,
           text: "3-minute session mark reached",
+          condition: userContext.condition,
+          participantId: userContext.participantId,
           timestamp: new Date().toISOString(),
         })
       },
@@ -51,14 +92,17 @@ export default function SessionTimer() {
     return () => {
       clearTimeout(timer)
     }
-  }, [sessionStartTime])
+  }, [sessionStartTime, userContext])
 
   // Function to close window (return to survey)
   const handleReturnToSurvey = () => {
     // Track the return action
     trackEvent({
       action: "return_to_survey",
+      username: userContext.username,
       text: "User clicked return to survey",
+      condition: userContext.condition,
+      participantId: userContext.participantId,
       timestamp: new Date().toISOString(),
     })
 
@@ -77,7 +121,10 @@ export default function SessionTimer() {
     // Track the continue action
     trackEvent({
       action: "continue_exploring",
+      username: userContext.username,
       text: "User chose to continue exploring after 3 minutes",
+      condition: userContext.condition,
+      participantId: userContext.participantId,
       timestamp: new Date().toISOString(),
     })
   }
@@ -86,10 +133,15 @@ export default function SessionTimer() {
   const ReturnButton = () => {
     if (!showReturnButton) return null
 
+    // Adjust positioning based on mobile or desktop
+    const buttonPosition = isMobile
+      ? "fixed bottom-20 right-4 z-[1000]" // Higher on mobile to clear the footer menu
+      : "fixed bottom-4 right-4 z-50" // Default position on desktop
+
     return createPortal(
       <button
         onClick={handleReturnToSurvey}
-        className="fixed bottom-4 right-4 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-full shadow-lg z-50 transition-all"
+        className={`${buttonPosition} bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-full shadow-lg transition-all`}
       >
         Return to Survey
       </button>,
@@ -102,8 +154,8 @@ export default function SessionTimer() {
     if (!showCompletionModal) return null
 
     return createPortal(
-      <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-        <div className="bg-white p-6 rounded-lg shadow-lg max-w-md w-full">
+      <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[1001]">
+        <div className="bg-white p-6 rounded-lg shadow-lg max-w-md w-full m-4">
           <h2 className="text-xl font-bold mb-4">Time Check</h2>
           <p className="mb-6">
             You've explored the app for 3 minutes. You can continue exploring the app or return to the survey by
