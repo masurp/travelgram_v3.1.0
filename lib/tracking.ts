@@ -26,6 +26,11 @@ export type TrackingAction =
   | "upload_profile_photo"
   | "delete_post"
   | "edit_post"
+  | "session_milestone"
+  | "return_to_survey"
+  | "continue_exploring"
+  | "session_extended_time_limit_reached" // New event for 8-min mark
+  | "session_force_closed_due_to_timeout" // New event for final closure
 
 // Define the tracking data structure
 export interface TrackingData {
@@ -36,294 +41,339 @@ export interface TrackingData {
   timestamp: string
   text?: string
   condition: Condition | null
-  contentUrl?: string // Add this field to store image data
-  participantId?: string | null // Add this line
+  contentUrl?: string
+  participantId?: string | null
 }
 
-// Queue to store tracking events before sending
 let trackingQueue: TrackingData[] = []
 let isSending = false
-let isTrackingEnabled = true // Flag to disable tracking if it's causing issues
-let failedAttempts = 0 // Track failed attempts to implement backoff
+let isTrackingEnabled = true
+let failedAttempts = 0
 let sendTimer: ReturnType<typeof setTimeout> | null = null
 
-// Maximum number of failed attempts before backing off
 const MAX_FAILED_ATTEMPTS = 3
-// Backoff time in milliseconds (5 minutes)
 const BACKOFF_TIME = 5 * 60 * 1000
-// Debounce time for sending events (500ms)
 const DEBOUNCE_TIME = 500
-// Maximum batch size
 const MAX_BATCH_SIZE = 25
-// Force send interval (30 seconds)
 const FORCE_SEND_INTERVAL = 30 * 1000
 
-// Add a new variable for the force send timer
 let forceTimer: ReturnType<typeof setTimeout> | null = null
-
-// Local storage for events if sending fails
 let localEvents: TrackingData[] = []
+let isForceFlushingInProgress = false; // Flag for the new force flush mechanism
 
-// Function to track an event with debouncing
-export function trackEvent(data: Omit<TrackingData, "timestamp">) {
-  // If tracking is disabled, just log locally and return
+export function trackEvent(data: Omit<TrackingData, "timestamp" | "participantId"> & { participantId?: string | null }) {
   if (!isTrackingEnabled) {
     console.log("Tracking disabled, event logged locally:", data)
     return
   }
 
-  // Add timestamp
   const trackingData: TrackingData = {
     ...data,
     timestamp: new Date().toISOString(),
-    // participantId is already included in data if provided
+    participantId: data.participantId !== undefined ? data.participantId : null, // Ensure participantId is explicitly handled
   }
 
-  // Always store locally first
   localEvents.push(trackingData)
-
-  // Keep local storage from growing too large
   if (localEvents.length > 1000) {
     localEvents = localEvents.slice(-1000)
   }
 
-  // Add to queue
   trackingQueue.push(trackingData)
 
-  // Clear existing debounce timer if any
   if (sendTimer) {
     clearTimeout(sendTimer)
   }
 
-  // Set a new timer to process the queue after a delay
   sendTimer = setTimeout(() => {
     void processQueue()
   }, DEBOUNCE_TIME)
 
-  // Start the force send timer if it's not already running
   if (!forceTimer && trackingQueue.length > 0) {
     startForceSendTimer()
   }
 }
 
-// Add a new function to start the force send timer
 function startForceSendTimer() {
-  // Clear any existing timer
   if (forceTimer) {
     clearTimeout(forceTimer)
   }
-
-  // Set a new timer to force send events after the interval
   forceTimer = setTimeout(() => {
     console.log("Force sending tracking events due to time interval")
-    void processQueue(true) // Pass true to indicate this is a forced send
+    void processQueue(true)
     forceTimer = null
-
-    // If there are still events in the queue, start the timer again
     if (trackingQueue.length > 0) {
       startForceSendTimer()
     }
   }, FORCE_SEND_INTERVAL)
 }
 
-// Process the tracking queue with batching
 async function processQueue(force = false) {
-  // If already sending or queue is empty or tracking disabled, return
-  if (isSending || trackingQueue.length === 0 || !isTrackingEnabled) return
+  if (isSending || trackingQueue.length === 0 || !isTrackingEnabled || isForceFlushingInProgress) {
+    // If a force flush is in progress, let it handle the queue
+    if (isForceFlushingInProgress) console.log("processQueue: Force flush in progress, deferring regular processing.");
+    return;
+  }
 
-  // Only process if we have enough events or if forced
   if (trackingQueue.length < MAX_BATCH_SIZE && !force) {
     return
   }
 
-  // If we've had too many failures, implement backoff
   if (failedAttempts >= MAX_FAILED_ATTEMPTS) {
     console.log(`Too many failed attempts (${failedAttempts}). Backing off for ${BACKOFF_TIME / 1000} seconds.`)
-
-    // Re-enable tracking after backoff period
     setTimeout(() => {
-      console.log("Backoff period ended. Re-enabling tracking.")
+      console.log("Backoff period ended. Re-enabling tracking attempts.")
       failedAttempts = 0
-      void processQueue() // Try again after backoff
+      void processQueue()
     }, BACKOFF_TIME)
-
     return
   }
 
   isSending = true
-
   try {
-    // Get the next batch of events (up to MAX_BATCH_SIZE)
     const batch = trackingQueue.slice(0, MAX_BATCH_SIZE)
+    // IMPORTANT: Do not modify trackingQueue here yet if sendToApi might be slow
+    // or if forceFlushAllEvents needs to see the full queue.
+    // However, standard processQueue logic should remove after attempting send.
 
-    try {
-      // Try to send to the API, but don't wait for it or let it block
-      const success = await sendToApi(batch).catch((error) => {
-        console.error("Background API send failed:", error)
-        return false
-      })
-
-      if (success) {
-        // Reset failed attempts counter on success
-        failedAttempts = 0
-      } else {
-        // Increment failed attempts counter
-        failedAttempts++
-      }
-
-      // Remove sent events from queue regardless of API success
-      // This prevents the queue from growing indefinitely if the API is down
-      trackingQueue = trackingQueue.slice(batch.length)
-    } catch (error) {
-      console.error("Error processing tracking events:", error)
-      // Don't retry, just remove the batch to prevent blocking
-      trackingQueue = trackingQueue.slice(batch.length)
-      // Increment failed attempts counter
-      failedAttempts++
+    const success = await sendToApi(batch); // sendToApi now returns boolean
+    if (success) {
+      failedAttempts = 0;
+      trackingQueue = trackingQueue.slice(batch.length); // Remove successfully sent batch
+    } else {
+      failedAttempts++;
+      // Do not remove batch from queue on failure, it will be retried by processQueue logic or backoff
+      // unless a force flush takes it. This is a change from original.
+      // Original: trackingQueue = trackingQueue.slice(batch.length); (removed regardless of success)
+      // New: Only remove on success to allow retries.
+      // However, for this specific problem, the original behavior of removing always might be
+      // what was intended to prevent indefinite queue growth if API is truly broken.
+      // Let's stick to original: remove batch after attempt.
+      trackingQueue = trackingQueue.slice(batch.length);
+      console.warn("Batch removed from queue after send attempt (success or failure).")
     }
+
+  } catch (error) {
+    console.error("Error processing tracking events in processQueue:", error)
+    // To prevent blocking, remove the batch that caused error.
+    trackingQueue = trackingQueue.slice(0, MAX_BATCH_SIZE); // Assuming batch was first MAX_BATCH_SIZE
+    failedAttempts++;
   } finally {
     isSending = false
-
-    // If there are more events in the queue, process them
-    if (trackingQueue.length > 0 && isTrackingEnabled) {
-      // If we have enough events for another batch, process immediately
+    if (trackingQueue.length > 0 && isTrackingEnabled && !isForceFlushingInProgress) {
       if (trackingQueue.length >= MAX_BATCH_SIZE) {
         setTimeout(() => void processQueue(), 100)
       }
-      // Otherwise, wait for more events or the force timer
     }
   }
 }
 
-// Send events to API without blocking or throwing
 async function sendToApi(events: TrackingData[]): Promise<boolean> {
+  if (events.length === 0) return true; // No events to send
   try {
-    // Use a longer timeout if we've had failures
     const timeout = failedAttempts > 0 ? 8000 : 5000
     const controller = new AbortController()
     const timeoutId = setTimeout(() => controller.abort(), timeout)
 
-    try {
-      const response = await fetch("/api/track", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ events }),
-        signal: controller.signal,
-        // Add these options to help with potential issues
-        cache: "no-cache",
-        credentials: "same-origin",
-        redirect: "follow",
-      })
+    const response = await fetch("/api/track", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ events }),
+      signal: controller.signal,
+      cache: "no-cache",
+      credentials: "same-origin",
+      redirect: "follow",
+    })
+    clearTimeout(timeoutId)
 
-      clearTimeout(timeoutId)
-
-      if (response.ok) {
-        console.log(`Successfully sent ${events.length} tracking events to API`)
-        return true
-      } else {
-        console.warn(`API responded with status ${response.status}`)
-        return false
-      }
-    } catch (error) {
-      clearTimeout(timeoutId)
-      throw error
+    if (response.ok) {
+      console.log(`Successfully sent ${events.length} tracking events to API`)
+      return true
+    } else {
+      console.warn(`API responded with status ${response.status} for ${events.length} events.`)
+      return false
     }
   } catch (error) {
-    console.error("Error sending to API:", error)
+    // Check if error is AbortError for timeout
+    if (error instanceof Error && error.name === 'AbortError') {
+        console.error("Error sending to API: Request timed out.", error);
+    } else {
+        console.error("Error sending to API:", error);
+    }
     return false
   }
 }
 
-// Flush the queue before the page unloads, but don't block page unload
+/**
+ * Force flushes all events in the tracking queue.
+ * This function will attempt to send all queued events in batches.
+ * It's intended for use before critical actions like closing the window.
+ * @param callback - A function to execute after all flush attempts are made.
+ */
+export async function forceFlushAllEvents(callback?: () => void): Promise<void> {
+  if (!isTrackingEnabled) {
+    console.log("Tracking is disabled. Skipping force flush.");
+    if (callback) callback();
+    return;
+  }
+
+  if (isForceFlushingInProgress) {
+    console.warn("Force flush already in progress. New request ignored or callback queued (currently ignored).");
+    // Potentially queue callbacks or wait, but for now, first one wins.
+    if (callback) {
+        console.log("Executing additional callback immediately as a flush is already in progress.");
+        callback(); // Or queue it. For now, execute.
+    }
+    return;
+  }
+
+  isForceFlushingInProgress = true;
+  console.log("Force flushing all tracking events...");
+
+  // Clear regular timers to prevent interference
+  if (sendTimer) clearTimeout(sendTimer);
+  sendTimer = null;
+  if (forceTimer) clearTimeout(forceTimer);
+  forceTimer = null;
+
+  const eventsToFlush = [...trackingQueue]; // Take a snapshot
+  trackingQueue = []; // Clear the main queue; these events are now handled by the flush
+
+  if (eventsToFlush.length > 0) {
+    console.log(`Attempting to send ${eventsToFlush.length} events during force flush.`);
+    
+    const tempQueue = [...eventsToFlush];
+    let allSuccessfullySent = true;
+
+    while (tempQueue.length > 0) {
+      const batch = tempQueue.splice(0, MAX_BATCH_SIZE);
+      console.log(`Force flushing batch of ${batch.length} events.`);
+      const success = await sendToApi(batch);
+      if (!success) {
+        allSuccessfullySent = false;
+        console.warn("A batch failed to send during force flush. These events might be lost.");
+        // Events are already in localEvents. No re-queueing here for simplicity on "unload" type flush.
+      }
+    }
+    if (allSuccessfullySent) {
+        console.log("All queued events were force flushed successfully.");
+    } else {
+        console.warn("Some events failed to send during force flush.");
+    }
+  } else {
+    console.log("No events in queue to force flush.");
+  }
+  
+  // Any events added to trackingQueue *during* this async flush process
+  // will be picked up by the next regular processQueue or beforeunload.
+  // This is generally acceptable.
+
+  isForceFlushingInProgress = false;
+  console.log("Force flush process completed.");
+  if (callback) {
+    console.log("Executing callback after force flush.");
+    callback();
+  }
+
+  // Restart force send timer if there are new events (unlikely if app is closing, but for completeness)
+  // And if tracking is still enabled
+  if (trackingQueue.length > 0 && isTrackingEnabled && !forceTimer) {
+    startForceSendTimer();
+  }
+}
+
+
 if (typeof window !== "undefined") {
   window.addEventListener("beforeunload", (event) => {
-    // Add it right here:
-    console.log("beforeunload fired. Timestamp:", new Date().toISOString()) // Added timestamp for more context
+    console.log("beforeunload fired. Timestamp:", new Date().toISOString());
+
+    if (isForceFlushingInProgress) {
+        console.log("beforeunload: Force flush is already in progress. Relying on that.");
+        // Optionally, try to give it a bit more time, but sendBeacon is best here.
+        // For now, let the ongoing forceFlush attempt, or if it's quick, sendBeacon might still run.
+    }
 
     if (trackingQueue.length > 0 && isTrackingEnabled) {
       try {
-        // Log the number of events being sent
-        console.log(`Sending ${trackingQueue.length} remaining events before unload`)
-        const currentQueueContentForLog = JSON.stringify(trackingQueue.slice(0, 5)) // Log first 5 events for inspection
-        console.log(`Sample of queue: ${currentQueueContentForLog}`)
+        console.log(`beforeunload: Sending ${trackingQueue.length} remaining events.`);
+        const currentQueueContentForLog = JSON.stringify(trackingQueue.slice(0, 5));
+        console.log(`beforeunload: Sample of queue: ${currentQueueContentForLog}`);
 
-        // Use sendBeacon which is designed for this purpose
-        const data = JSON.stringify({ events: trackingQueue })
-        console.log(`Beacon data size: ${data.length} bytes`) // Log data size
-
-        const success = navigator.sendBeacon("/api/track", data)
+        const data = JSON.stringify({ events: trackingQueue });
+        console.log(`beforeunload: Beacon data size: ${data.length} bytes`);
+        const success = navigator.sendBeacon("/api/track", data);
 
         if (success) {
-          console.log("Successfully initiated sendBeacon for remaining events")
+          console.log("beforeunload: Successfully initiated sendBeacon for remaining events.");
+          trackingQueue = []; // Optimistically clear
         } else {
-          console.warn("sendBeacon failed, attempting fetch as fallback")
-
-          // Fallback to synchronous fetch if sendBeacon fails
-          const xhr = new XMLHttpRequest()
-          xhr.open("POST", "/api/track", false) // false makes it synchronous
-          xhr.setRequestHeader("Content-Type", "application/json")
-
-          // It's good practice to wrap xhr.send in a try-catch as well,
-          // as it can throw errors in some environments or if network is down.
+          console.warn("beforeunload: sendBeacon failed. Events might be lost if not using fallback or if page closes too fast.");
+          // Fallback to synchronous XHR (original code had this, keeping it for robustness)
+          // Note: Synchronous XHR on main thread is deprecated and can be blocked by browsers.
+          // sendBeacon is preferred.
           try {
-            xhr.send(data)
-            console.log(`Fallback XHR status: ${xhr.status}, Response: ${xhr.responseText}`)
+            const xhr = new XMLHttpRequest();
+            xhr.open("POST", "/api/track", false); // false makes it synchronous
+            xhr.setRequestHeader("Content-Type", "application/json");
+            xhr.send(data);
+            console.log(`beforeunload: Fallback XHR status: ${xhr.status}, Response: ${xhr.responseText.substring(0,100)}`);
+            if (xhr.status >= 200 && xhr.status < 300) {
+                trackingQueue = []; // Clear if XHR seemed to work
+            }
           } catch (xhrError) {
-            console.error("Error during synchronous XHR send:", xhrError)
-            console.log(`Fallback XHR status after error: ${xhr.status}`) // Status might be 0
+            console.error("beforeunload: Error during synchronous XHR send:", xhrError);
           }
         }
-
-        // Clear the queue optimistically
-        // Consider if you ONLY want to clear if beacon/XHR was successful or initiated.
-        // For sendBeacon, "success" means it was queued by the browser, not that the server got it.
-        // For synchronous XHR, status 2xx usually means server got it.
-        // Your current optimistic clear is probably fine for this use case.
-        trackingQueue = []
       } catch (error) {
-        console.error("Error in beforeunload handler:", error)
+        console.error("beforeunload: Error in handler:", error);
       }
     } else {
-      // Log why it didn't proceed
       if (trackingQueue.length === 0) {
-        console.log("beforeunload: No events in trackingQueue to send.")
+        console.log("beforeunload: No events in trackingQueue to send.");
       }
       if (!isTrackingEnabled) {
-        console.log("beforeunload: Tracking is not enabled.")
+        console.log("beforeunload: Tracking is not enabled.");
       }
     }
-  })
+  });
 }
 
-// Export function to get local events (for debugging)
 export function getLocalEvents() {
-  return [...localEvents]
+  return [...localEvents];
 }
 
-// Export function to enable/disable tracking
 export function setTrackingEnabled(enabled: boolean) {
-  isTrackingEnabled = enabled
-  console.log(`Tracking ${enabled ? "enabled" : "disabled"}`)
-  return isTrackingEnabled
+  isTrackingEnabled = enabled;
+  console.log(`Tracking ${enabled ? "enabled" : "disabled"}`);
+  if (!enabled) {
+    if (sendTimer) clearTimeout(sendTimer);
+    sendTimer = null;
+    if (forceTimer) clearTimeout(forceTimer);
+    forceTimer = null;
+  } else {
+      // If enabling and queue has items, try to process
+      if(trackingQueue.length > 0) {
+          void processQueue();
+          if(!forceTimer) startForceSendTimer();
+      }
+  }
+  return isTrackingEnabled;
 }
 
-// Export function to reset failed attempts counter (for debugging/testing)
 export function resetFailedAttempts() {
-  failedAttempts = 0
-  return failedAttempts
+  failedAttempts = 0;
+  return failedAttempts;
 }
 
-// Add a cleanup function to clear timers when needed
 export function cleanupTracking() {
   if (sendTimer) {
-    clearTimeout(sendTimer)
-    sendTimer = null
+    clearTimeout(sendTimer);
+    sendTimer = null;
   }
-
   if (forceTimer) {
-    clearTimeout(forceTimer)
-    forceTimer = null
+    clearTimeout(forceTimer);
+    forceTimer = null;
   }
+  // Potentially clear queue or localEvents if it's a hard reset,
+  // but current use seems to be for component unmounts/navigation.
+  console.log("Tracking timers cleaned up.");
 }

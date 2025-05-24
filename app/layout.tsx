@@ -4,6 +4,7 @@ import { Inter } from "next/font/google"
 import "./globals.css"
 import GlobalStyles from "@/components/GlobalStyles"
 import CloseTabScript from "@/components/CloseTabScript"
+import SessionTimer from "@/components/session-timer"
 
 const inter = Inter({ subsets: ["latin"] })
 
@@ -30,6 +31,7 @@ export default function RootLayout({
         <GlobalStyles />
         {children}
         <CloseTabScript />
+        <SessionTimer />
       </body>
     </html>
   )
