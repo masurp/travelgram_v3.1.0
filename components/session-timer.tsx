@@ -3,14 +3,14 @@
 import { useEffect, useState, useRef } from "react"
 import { createPortal } from "react-dom"
 import { Button } from "@/components/ui/button"
-import { trackEvent, forceFlushAllEvents } from "@/lib/tracking" // Import forceFlushAllEvents
+import { trackEvent, forceFlushAllEvents } from "@/lib/tracking"
 import { useIsMobile } from "@/hooks/use-mobile"
 import { usePathname } from "next/navigation"
 
-// Assuming CloseTabScript makes window.closeTab available globally
 declare global {
   interface Window {
     closeTab?: () => void;
+    closeTabSetup?: boolean; // For idempotent script injection
   }
 }
 
@@ -23,18 +23,14 @@ export default function SessionTimer() {
   const pathname = usePathname()
   const [isTimerActive, setIsTimerActive] = useState(true)
 
-  // New state for the 8-minute flow
   const [isInExtendedMode, setIsInExtendedMode] = useState(false)
   const [showForceCloseModal, setShowForceCloseModal] = useState(false)
   const [forceCloseCountdown, setForceCloseCountdown] = useState(10)
 
-  // Refs for timers to ensure cleanup
   const threeMinuteTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const extendedSessionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const countdownIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
-
-  // Don't show session timer on admin pages
   if (pathname.startsWith("/admin")) {
     return null
   }
@@ -56,27 +52,56 @@ export default function SessionTimer() {
     }
   }
 
-  const performCloseActions = () => {
+  // Function to attempt closing and handle fallback
+  const attemptCloseAndFallback = (trackingTextPrefix: string) => {
+    // Attempt to close the window immediately.
+    // The 'beforeunload' handler in tracking.ts should fire if close is initiated,
+    // using navigator.sendBeacon to send remaining events.
     if (typeof window.closeTab === 'function') {
+      console.log(`${trackingTextPrefix}: Attempting synchronous close via window.closeTab()`);
       window.closeTab();
     } else {
+      console.log(`${trackingTextPrefix}: Attempting synchronous close via window.close()`);
       window.close();
-      // Fallback if window.close is blocked or doesn't work reliably
-      setTimeout(() => {
-        if (!window.closed) { // Check if window actually closed
-            window.location.href = "about:blank";
-        }
-      }, 100); // Small delay
     }
-  }
 
-  // Handle beforeunload event for the first 3 minutes
+    // If the close attempt didn't work (e.g., on mobile, or tab not script-opened),
+    // the page will still be here. We'll then force flush and redirect/inform.
+    // We use a short timeout to give the browser a chance to close.
+    setTimeout(() => {
+      if (document.visibilityState === "visible") { // Heuristic: if tab is still visible, close failed
+        console.log(`${trackingTextPrefix}: Window did not close or is taking too long. Forcing event flush and providing fallback.`);
+        const userData = getUserData();
+        // Track the failure to close, or re-track the intent if appropriate
+        trackEvent({
+            action: "return_to_survey", // Or a more specific action like "window_close_failed_fallback_initiated"
+            username: userData.username,
+            text: `${trackingTextPrefix}: Window close failed/blocked, initiating force flush and fallback redirect.`,
+            condition: userData.condition,
+            participantId: userData.participantId,
+        });
+
+        forceFlushAllEvents(() => {
+          console.log(`${trackingTextPrefix}: Fallback force flush completed. Redirecting to about:blank.`);
+          window.location.href = "about:blank";
+        });
+      } else {
+        console.log(`${trackingTextPrefix}: Window appears to have closed or is no longer visible.`);
+        // 'beforeunload' in tracking.ts should have handled event flushing.
+      }
+    }, 750); // Delay to check if close was successful. Adjust if needed.
+  };
+
+
+  // Handle beforeunload event for the first 3 minutes (custom prompt)
   useEffect(() => {
-    if (!isTimerActive) return
+    if (!isTimerActive) return // Only active during the initial 3-minute phase with the custom prompt
 
     const handleBeforeUnload = (e: BeforeUnloadEvent) => {
       const timeElapsed = Date.now() - sessionStartTime
-      if (timeElapsed < 3 * 60 * 1000 && beforeUnloadActive) {
+      // Only show custom prompt if 'beforeUnloadActive' is true (i.e., user hasn't interacted with modals yet
+      // or we haven't programmatically tried to close the tab)
+      if (beforeUnloadActive && timeElapsed < 3 * 60 * 1000) {
         const message = "Are you sure you want to leave? Please complete the 3-minute interaction."
         e.preventDefault()
         e.returnValue = message
@@ -85,16 +110,16 @@ export default function SessionTimer() {
     }
     window.addEventListener("beforeunload", handleBeforeUnload)
     return () => window.removeEventListener("beforeunload", handleBeforeUnload)
-  }, [sessionStartTime, beforeUnloadActive, isTimerActive])
+  }, [sessionStartTime, beforeUnloadActive, isTimerActive]) // isTimerActive ensures this specific prompt logic stops when timer completes
 
   // Timer for 3-minute popup
   useEffect(() => {
-    if (!isTimerActive) return
+    if (!isTimerActive) return // This timer only runs once for the initial 3 minutes
 
     threeMinuteTimerRef.current = setTimeout(() => {
       setShowCompletionModal(true)
-      setBeforeUnloadActive(false)
-      setIsTimerActive(false) // Stop this phase of the timer
+      setBeforeUnloadActive(false) // After 3 min, disable the custom "Are you sure" prompt
+      setIsTimerActive(false) // Stop this specific timer phase
 
       const userData = getUserData()
       trackEvent({
@@ -109,12 +134,11 @@ export default function SessionTimer() {
     return () => {
       if (threeMinuteTimerRef.current) clearTimeout(threeMinuteTimerRef.current)
     }
-  }, [sessionStartTime, isTimerActive])
-
+  }, [sessionStartTime, isTimerActive]) // Only depends on sessionStartTime and its active state
 
   // Timer for 5 additional minutes if "Continue Exploring"
   useEffect(() => {
-    if (!isInExtendedMode) return
+    if (!isInExtendedMode) return // Only run if user chose to continue
 
     console.log("SessionTimer: Extended mode activated. Starting 5-minute timer.");
     extendedSessionTimerRef.current = setTimeout(() => {
@@ -127,7 +151,7 @@ export default function SessionTimer() {
         participantId: userData.participantId,
       })
       setShowForceCloseModal(true)
-      setForceCloseCountdown(10) // Reset countdown for display
+      setForceCloseCountdown(10)
     }, 5 * 60 * 1000) // 5 minutes
 
     return () => {
@@ -140,23 +164,21 @@ export default function SessionTimer() {
     if (!showForceCloseModal) return
 
     if (forceCloseCountdown <= 0) {
-      console.log("SessionTimer: Force close countdown finished. Flushing events and closing.");
-      const userData = getUserData()
+      console.log("SessionTimer: Force close countdown finished.");
+      if (countdownIntervalRef.current) clearInterval(countdownIntervalRef.current);
+      
+      const userData = getUserData();
       trackEvent({
         action: "session_force_closed_due_to_timeout",
         username: userData.username,
-        text: "Session force closed after 8-min warning + 10s countdown",
+        text: "Auto-Close: Session force closed after 8-min warning + 10s countdown - initiating close",
         condition: userData.condition,
         participantId: userData.participantId,
-      })
+      });
       
-      // Clean up interval if it's still running
-      if (countdownIntervalRef.current) clearInterval(countdownIntervalRef.current);
-
-      void forceFlushAllEvents(() => {
-        performCloseActions();
-      })
-      return // Stop further execution in this effect
+      setBeforeUnloadActive(false); // Ensure our custom prompt from early phase doesn't interfere
+      attemptCloseAndFallback("Auto-Close");
+      return;
     }
 
     countdownIntervalRef.current = setInterval(() => {
@@ -169,33 +191,33 @@ export default function SessionTimer() {
   }, [showForceCloseModal, forceCloseCountdown])
 
 
-  const handleReturnToSurvey = async () => {
-    console.log("SessionTimer: User clicked 'Return to Survey'.")
-    const userData = getUserData()
+  const handleReturnToSurvey = () => {
+    console.log("SessionTimer: User clicked 'Return to Survey'.");
+    const userData = getUserData();
     trackEvent({
       action: "return_to_survey",
       username: userData.username,
-      text: "User clicked return to survey",
+      text: "ReturnToSurveyButton: User clicked button.",
       condition: userData.condition,
       participantId: userData.participantId,
-    })
+    });
 
-    // Disable any active timers to prevent them from firing during/after close
-    setIsTimerActive(false)
-    setBeforeUnloadActive(false)
-    setIsInExtendedMode(false) // Stop extended mode if active
-    setShowForceCloseModal(false) // Hide force close modal if somehow visible
-    if (threeMinuteTimerRef.current) clearTimeout(threeMinuteTimerRef.current)
-    if (extendedSessionTimerRef.current) clearTimeout(extendedSessionTimerRef.current)
-    if (countdownIntervalRef.current) clearInterval(countdownIntervalRef.current)
+    // Clean up UI and state
+    setIsTimerActive(false); // Stop any initial 3-min phase logic
+    setBeforeUnloadActive(false); // IMPORTANT: Disable custom "Are you sure?" prompt
+    setIsInExtendedMode(false); // Stop extended mode if active
+    setShowForceCloseModal(false); // Hide force close modal if somehow visible
+
+    // Clear all timers
+    if (threeMinuteTimerRef.current) clearTimeout(threeMinuteTimerRef.current);
+    if (extendedSessionTimerRef.current) clearTimeout(extendedSessionTimerRef.current);
+    if (countdownIntervalRef.current) clearInterval(countdownIntervalRef.current);
     
     setShowCompletionModal(false); // Hide initial modal
     setShowReturnButton(false); // Hide persistent button
 
-    await forceFlushAllEvents(() => {
-      performCloseActions();
-    })
-  }
+    attemptCloseAndFallback("ReturnToSurveyButton");
+  };
 
   const handleContinueExploring = () => {
     console.log("SessionTimer: User chose to 'Continue Exploring'.")
@@ -251,21 +273,20 @@ export default function SessionTimer() {
   const ForceCloseModal = () => {
     if (!showForceCloseModal) return null
     return createPortal(
-      <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-[1002]"> {/* Higher z-index */}
+      <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-[1002]">
         <div className="bg-white p-6 rounded-lg shadow-lg max-w-md w-full m-4">
           <h2 className="text-xl font-bold mb-4">Time Limit Reached</h2>
           <p className="mb-6">
             The allocated time for this task is now over.
             The application will close in <span className="font-bold">{forceCloseCountdown}</span> seconds.
           </p>
-          {/* No buttons needed, it will auto-close */}
         </div>
       </div>,
       document.body
     );
   };
 
-  // Cleanup all timers on component unmount
+  // General cleanup for all timers on component unmount
   useEffect(() => {
     return () => {
       if (threeMinuteTimerRef.current) clearTimeout(threeMinuteTimerRef.current);
