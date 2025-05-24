@@ -104,7 +104,7 @@ export default function SessionTimer() {
         condition: userData.condition,
         participantId: userData.participantId,
       })
-    }, 1 * 45 * 1000)
+    }, 3 * 60 * 1000)
 
     return () => {
       if (threeMinuteTimerRef.current) clearTimeout(threeMinuteTimerRef.current)
@@ -234,7 +234,7 @@ export default function SessionTimer() {
         <div className="bg-white p-6 rounded-lg shadow-lg max-w-md w-full m-4">
           <h2 className="text-xl font-bold mb-4">Time Check</h2>
           <p className="mb-6">
-            You've explored the app for 3 minutes. You can continue exploring or return to the survey.
+            You've used the app for 3 minutes. You can keep exploring or return to the survey. If you continue, a 'Return to Survey' button will appear at the bottom right.
           </p>
           <div className="flex flex-col sm:flex-row gap-3 justify-end">
             <Button variant="outline" onClick={handleContinueExploring}>
